@@ -1,7 +1,7 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { prisma } from "../lib/prisma";
-import { requireSession } from "../middleware/auth";
+import { requireSession, verifyStepUpToken } from "../middleware/auth";
 import { checkIdempotency, saveIdempotency } from "../middleware/idempotency";
 import { AppError, requireIfMatch, sendError, sendSuccess } from "../utils/envelope";
 import { canonicalHash, generateTraceId } from "../utils/crypto";
@@ -1147,7 +1147,7 @@ disputesRouter.post("/action-requests/:id/consents", requireSession, async (req,
 
     requireIfMatch(req.headers["if-match"] as string | undefined, actReq.proposalVersion);
 
-    const { paramsHash, caseVersion, intent, decision = "APPROVED" } = req.body || {};
+    const { paramsHash, caseVersion, intent, decision = "APPROVED", stepUpId } = req.body || {};
     if (paramsHash !== actReq.paramsHash || Number(caseVersion) !== c.caseVersion) {
       throw new AppError(
         409,
@@ -1160,6 +1160,17 @@ disputesRouter.post("/action-requests/:id/consents", requireSession, async (req,
 
     if (intent === "AUTHORIZE_FINANCIAL_EXECUTION" && actorParty !== "SELLER") {
       throw new AppError(403, "FORBIDDEN", "Only the Seller fund owner can grant AUTHORIZE_FINANCIAL_EXECUTION");
+    }
+
+    if (intent === "AUTHORIZE_FINANCIAL_EXECUTION") {
+      if (!stepUpId) {
+        throw new AppError(
+          403,
+          "STEP_UP_REQUIRED",
+          "Financial authorization requires a fresh MFA verification"
+        );
+      }
+      await verifyStepUpToken(req.auth!.userId, stepUpId, "MERCHANT_EXECUTION", actReq.id);
     }
 
     const consent = await prisma.partyConsent.create({

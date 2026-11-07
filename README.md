@@ -55,13 +55,15 @@ npm.cmd run dev
 
 The API listens on `http://localhost:4000`. After starting the API and frontend in API mode, open `http://localhost:3000/login` and use one of these Express seed accounts:
 
-| Role | Email | Password | MFA |
+| Role | Email | Password | MFA saat login |
 | --- | --- | --- | --- |
 | Customer | `customer@velapal.demo` | `correct-horse-battery-staple` | Not required |
 | Seller | `seller@velapal.demo` | `correct-horse-battery-staple` | Not required |
 | Admin | `admin@velapal.demo` | `correct-horse-battery-staple` | Enter `123456` when prompted |
 
 These are backend seed credentials, distinct from the mock-only accounts documented in [apps/web/README.md](apps/web/README.md). To create them in a fresh database, run `npm.cmd run seed` from `apps/api`. The seed uses upserts without overwriting existing users, so rerunning it does not reset a password that was changed earlier. PayPal credentials are optional for local mock/simulation behavior and must be replaced with valid sandbox credentials to test PayPal against the sandbox.
+
+The table describes login MFA only. Seller login does not require MFA, but approving `AUTHORIZE_FINANCIAL_EXECUTION` requires a separate, action-scoped `MERCHANT_EXECUTION` MFA verification. Enter the demo code `123456` in the frontend prompt; the frontend then sends the returned `stepUpId` token, which Express validates against the Seller and the specific action request. The execution endpoint requires that verified Seller authorization consent.
 
 ### Where the API `.env` values come from
 

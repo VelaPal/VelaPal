@@ -108,7 +108,7 @@ export async function verifyStepUpToken(
     !ch ||
     ch.userId !== userId ||
     ch.purpose !== expectedPurpose ||
-    (expectedTargetId && ch.targetId && ch.targetId !== expectedTargetId) ||
+    (expectedTargetId && ch.targetId !== expectedTargetId) ||
     ch.expiresAt < new Date()
   ) {
     throw new AppError(403, "STEP_UP_REQUIRED", "Step-up verification is invalid, expired, or bound to a different target");
