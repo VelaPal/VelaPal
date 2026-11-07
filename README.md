@@ -55,7 +55,7 @@ npm.cmd run dev
 
 The API listens on `http://localhost:4000`. After starting the API and frontend in API mode, open `http://localhost:3000/login` and use one of these Express seed accounts:
 
-| Role | Email | Password | MFA saat login |
+| Role | Email | Password | MFA |
 | --- | --- | --- | --- |
 | Customer | `customer@velapal.demo` | `correct-horse-battery-staple` | Not required |
 | Seller | `seller@velapal.demo` | `correct-horse-battery-staple` | Not required |
