@@ -1,0 +1,1 @@
+{"name":"@velapal/mock-api","version":"6.1.1","type":"module","private":true,"scripts":{"start":"node server.mjs","test":"node --test ../../tests/*.test.mjs"},"engines":{"node":">=20"}}

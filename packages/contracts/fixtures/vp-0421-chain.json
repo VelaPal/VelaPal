@@ -1,0 +1,55 @@
+{
+  "caseId": "case_vp_0421",
+  "transactionId": "tx_vp_1028",
+  "orderId": "ord_vp_1028",
+  "versionChain": [
+    {
+      "caseVersion": 1,
+      "controlVersion": 1,
+      "accessRevision": 1,
+      "event": "Customer opened dispute"
+    },
+    {
+      "caseVersion": 2,
+      "controlVersion": 1,
+      "accessRevision": 2,
+      "event": "Customer shared photo-label-128gb.jpg (sourceVersion 2)"
+    },
+    {
+      "caseVersion": 3,
+      "controlVersion": 1,
+      "accessRevision": 3,
+      "event": "Seller shared invoice-pd-256.pdf (sourceVersion 2)"
+    },
+    {
+      "caseVersion": 3,
+      "controlVersion": 2,
+      "accessRevision": 3,
+      "event": "Assessment #1 NEEDS_INFO -> control WAITING_ADMIN"
+    },
+    {
+      "caseVersion": 3,
+      "controlVersion": 3,
+      "accessRevision": 3,
+      "event": "Admin intervention ALLOW_VOLUNTARY_MEDIATION -> control RUNNING"
+    },
+    {
+      "caseVersion": 4,
+      "controlVersion": 3,
+      "accessRevision": 4,
+      "event": "Customer shared serial-number-box.jpg (sourceVersion 2)"
+    },
+    {
+      "caseVersion": 5,
+      "controlVersion": 3,
+      "accessRevision": 4,
+      "event": "Customer posted shared statement referencing serial photo"
+    },
+    {
+      "caseVersion": 6,
+      "controlVersion": 3,
+      "accessRevision": 4,
+      "event": "Seller created USD 20.00 partial refund proposal (proposalVersion 1)"
+    }
+  ]
+}

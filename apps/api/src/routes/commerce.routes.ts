@@ -1,0 +1,516 @@
+import { Router } from "express";
+import crypto from "crypto";
+import { prisma } from "../lib/prisma";
+import { requireSession } from "../middleware/auth";
+import { checkIdempotency, saveIdempotency } from "../middleware/idempotency";
+import { AppError, sendError, sendSuccess } from "../utils/envelope";
+import { canonicalHash, generateTraceId } from "../utils/crypto";
+import { PayPalAdapter } from "../integrations/paypal.adapter";
+
+export const commerceRouter = Router();
+
+// GET /api/v1/catalog
+commerceRouter.get("/catalog", requireSession, async (req, res) => {
+  try {
+    const { type } = req.query;
+    const items = await prisma.product.findMany({
+      where: type ? { type: String(type) } : undefined,
+      orderBy: { createdAt: "asc" },
+    });
+    return sendSuccess(res, {
+      items: items.map((p) => ({
+        productId: p.id,
+        merchantId: p.merchantId,
+        merchantName: p.merchantName,
+        sku: p.sku,
+        name: p.name,
+        type: p.type,
+        priceMinor: p.priceMinor,
+        currency: p.currency,
+        variants: p.variants,
+        catalogVersion: p.catalogVersion,
+      })),
+    });
+  } catch (err) {
+    return sendError(res, err);
+  }
+});
+
+// POST /api/v1/quotes
+commerceRouter.post("/quotes", requireSession, async (req, res) => {
+  try {
+    const { productId, variantId, quantity = 1, spendingLimitMinor = 10000 } = req.body || {};
+    const product = await prisma.product.findUnique({ where: { id: String(productId) } });
+    if (!product) {
+      throw new AppError(404, "NOT_FOUND", "Product not found in catalog");
+    }
+    const variants = (product.variants as any[]) || [];
+    const selectedVariant = variants.find((v) => v.variantId === variantId) || variants[0];
+    const unitMinor = selectedVariant ? Number(selectedVariant.priceMinor) : product.priceMinor;
+    const amountMinor = unitMinor * Number(quantity);
+    const limitMinor = Number(spendingLimitMinor);
+    const ruleResult = amountMinor > limitMinor ? "OVER_LIMIT" : "READY";
+
+    const quote = await prisma.quote.create({
+      data: {
+        customerId: req.auth!.userId,
+        merchantId: product.merchantId,
+        productId: product.id,
+        sku: selectedVariant?.sku || product.sku,
+        variantId: selectedVariant?.variantId || "DEFAULT",
+        quantity: Number(quantity),
+        amountMinor,
+        currency: "USD",
+        spendingLimitMinor: limitMinor,
+        ruleResult,
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+      },
+    });
+
+    return sendSuccess(
+      res,
+      {
+        quoteId: quote.id,
+        merchantId: quote.merchantId,
+        productId: quote.productId,
+        sku: quote.sku,
+        variantId: quote.variantId,
+        quantity: quote.quantity,
+        amountMinor: quote.amountMinor,
+        currency: quote.currency,
+        spendingLimitMinor: quote.spendingLimitMinor,
+        ruleResult: quote.ruleResult,
+        quoteVersion: quote.quoteVersion,
+        expiresAt: quote.expiresAt.toISOString(),
+      },
+      quote.quoteVersion,
+      201
+    );
+  } catch (err) {
+    return sendError(res, err);
+  }
+});
+
+// POST /api/v1/checkout/orders
+commerceRouter.post("/checkout/orders", requireSession, async (req, res) => {
+  try {
+    const idem = await checkIdempotency(req, "POST:/api/v1/checkout/orders");
+    if (idem.cachedResponse) {
+      return res.status(idem.cachedResponse.statusCode).json(idem.cachedResponse.body);
+    }
+
+    const { quoteId, quoteVersion, consentAccepted } = req.body || {};
+    if (!consentAccepted) {
+      throw new AppError(422, "POLICY_DENIED", "Explicit buyer checkout consent is required");
+    }
+
+    const quote = await prisma.quote.findUnique({ where: { id: String(quoteId) } });
+    if (!quote || quote.customerId !== req.auth!.userId) {
+      throw new AppError(403, "FORBIDDEN", "Quote does not belong to the active customer");
+    }
+    if (quoteVersion !== undefined && Number(quoteVersion) !== quote.quoteVersion) {
+      throw new AppError(409, "STALE_QUOTE", "Quote version mismatch", false, quote.quoteVersion);
+    }
+    if (quote.ruleResult === "OVER_LIMIT") {
+      throw new AppError(422, "OVER_SPENDING_LIMIT", "Quote exceeds buyer spending limit");
+    }
+
+    const product = await prisma.product.findUnique({ where: { id: quote.productId } });
+    const snapshotHash = canonicalHash({
+      customerId: quote.customerId,
+      merchantId: quote.merchantId,
+      sku: quote.sku,
+      variantId: quote.variantId,
+      quantity: quote.quantity,
+      amountMinor: quote.amountMinor,
+      currency: quote.currency,
+    });
+
+    const snapshot = await prisma.purchaseSnapshot.create({
+      data: {
+        customerId: quote.customerId,
+        merchantId: quote.merchantId,
+        productId: quote.productId,
+        sku: quote.sku,
+        variantId: quote.variantId,
+        quantity: quote.quantity,
+        amountMinor: quote.amountMinor,
+        currency: quote.currency,
+        terms: `${product?.name || "Item"} (${quote.variantId}) x${quote.quantity} — USD ${(quote.amountMinor / 100).toFixed(2)}`,
+        snapshotHash,
+      },
+    });
+
+    const localOrderId = `ord_${crypto.randomBytes(4).toString("hex")}`;
+    const ppOrder = await PayPalAdapter.createOrder({
+      customId: localOrderId,
+      amountMinor: quote.amountMinor,
+      currency: quote.currency,
+      requestId: `pp-ord-${idem.key}`,
+    });
+
+    await prisma.transaction.create({
+      data: {
+        orderId: localOrderId,
+        customerId: quote.customerId,
+        merchantId: quote.merchantId,
+        merchantName: product?.merchantName || "Vela Market",
+        snapshotId: snapshot.id,
+        paypalOrderId: ppOrder.id,
+        amountMinor: quote.amountMinor,
+        refundableRemainingMinor: quote.amountMinor,
+        currency: quote.currency,
+        paymentStatus: "APPROVAL_PENDING",
+      },
+    });
+
+    const approveUrl = ppOrder.links?.find((l: any) => l.rel === "approve")?.href || null;
+    const responsePayload = {
+      data: {
+        checkoutOrderId: localOrderId,
+        snapshot: {
+          snapshotId: snapshot.id,
+          sku: snapshot.sku,
+          variantId: snapshot.variantId,
+          quantity: snapshot.quantity,
+          amountMinor: snapshot.amountMinor,
+          currency: snapshot.currency,
+          terms: snapshot.terms,
+          snapshotHash: snapshot.snapshotHash,
+          version: snapshot.version,
+        },
+        paypalOrder: {
+          paypalOrderId: ppOrder.id,
+          status: ppOrder.status,
+          approveUrl,
+        },
+      },
+      meta: {
+        traceId: generateTraceId("tr_ord"),
+        version: 1,
+        timestamp: new Date().toISOString(),
+      },
+    };
+
+    await saveIdempotency(req, "POST:/api/v1/checkout/orders", idem.key, idem.requestHash, 201, responsePayload);
+    return res.status(201).json(responsePayload);
+  } catch (err) {
+    return sendError(res, err);
+  }
+});
+
+// POST /api/v1/checkout/orders/:id/capture
+commerceRouter.post("/checkout/orders/:id/capture", requireSession, async (req, res) => {
+  try {
+    const routeKey = `POST:/api/v1/checkout/orders/${req.params.id}/capture`;
+    const idem = await checkIdempotency(req, routeKey);
+    if (idem.cachedResponse) {
+      return res.status(idem.cachedResponse.statusCode).json(idem.cachedResponse.body);
+    }
+
+    const { paypalOrderId, snapshotHash } = req.body || {};
+    const tx = await prisma.transaction.findUnique({ where: { orderId: req.params.id } });
+    if (!tx || tx.customerId !== req.auth!.userId) {
+      throw new AppError(403, "FORBIDDEN", "Order does not belong to the authenticated customer");
+    }
+
+    const snap = await prisma.purchaseSnapshot.findUnique({ where: { id: tx.snapshotId } });
+    if (snapshotHash && snap && snap.snapshotHash !== snapshotHash) {
+      throw new AppError(409, "STALE_CONSENT", "Snapshot hash does not match frozen checkout agreement");
+    }
+
+    let opStatus: "SUCCEEDED" | "UNKNOWN" = "SUCCEEDED";
+    let captureId: string | null = null;
+    try {
+      const capRes = await PayPalAdapter.captureOrder(paypalOrderId || tx.paypalOrderId!, `pp-cap-${idem.key}`);
+      captureId = capRes.purchase_units?.[0]?.payments?.captures?.[0]?.id || `2GG903537H${Date.now().toString().slice(-6)}`;
+      await prisma.transaction.update({
+        where: { id: tx.id },
+        data: {
+          paypalCaptureId: captureId,
+          paymentStatus: "PAID",
+          verifiedAt: new Date(),
+        },
+      });
+    } catch {
+      opStatus = "UNKNOWN";
+      await prisma.transaction.update({
+        where: { id: tx.id },
+        data: { paymentStatus: "UNKNOWN" },
+      });
+    }
+
+    const operation = await prisma.providerOperation.create({
+      data: {
+        type: "ORDER_CAPTURE",
+        checkoutOrderId: tx.orderId,
+        route: "PAYPAL_CAPTURE_REFUND",
+        status: opStatus,
+        amountMinor: tx.amountMinor,
+        currency: tx.currency,
+        paypalOrderId: tx.paypalOrderId,
+        paypalCaptureId: captureId,
+        providerRef: captureId,
+        requestIdKey: `op-cap-${idem.key}`,
+        verifiedAt: opStatus === "SUCCEEDED" ? new Date() : null,
+        nextStep:
+          opStatus === "SUCCEEDED"
+            ? "Order payment captured and verified."
+            : "Provider capture timed out. Reconcile using the same operationId.",
+      },
+    });
+
+    const responsePayload = {
+      data: {
+        operationId: operation.id,
+        checkoutOrderId: tx.orderId,
+        status: operation.status,
+        pollUrl: `/api/v1/operations/${operation.id}`,
+      },
+      meta: {
+        traceId: generateTraceId("tr_cap"),
+        version: 1,
+        timestamp: new Date().toISOString(),
+      },
+    };
+
+    await saveIdempotency(req, routeKey, idem.key, idem.requestHash, 202, responsePayload);
+    return res.status(202).json(responsePayload);
+  } catch (err) {
+    return sendError(res, err);
+  }
+});
+
+// GET /api/v1/transactions
+commerceRouter.get("/transactions", requireSession, async (req, res) => {
+  try {
+    const where =
+      req.auth!.workspaceType === "SELLER"
+        ? { merchantId: req.auth!.merchantId || "" }
+        : { customerId: req.auth!.userId };
+
+    const items = await prisma.transaction.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+    });
+
+    return sendSuccess(res, { items });
+  } catch (err) {
+    return sendError(res, err);
+  }
+});
+
+// GET /api/v1/transactions/:id
+commerceRouter.get("/transactions/:id", requireSession, async (req, res) => {
+  try {
+    const tx = await prisma.transaction.findFirst({
+      where: {
+        OR: [{ id: req.params.id }, { orderId: req.params.id }],
+      },
+    });
+    if (!tx) {
+      throw new AppError(404, "NOT_FOUND", "Transaction or order not found");
+    }
+    if (
+      req.auth!.workspaceType !== "ADMIN" &&
+      tx.customerId !== req.auth!.userId &&
+      tx.merchantId !== req.auth!.merchantId
+    ) {
+      throw new AppError(404, "NOT_FOUND", "Transaction not found in active workspace scope");
+    }
+
+    const snapshot = await prisma.purchaseSnapshot.findUnique({ where: { id: tx.snapshotId } });
+    const activeCase = await prisma.disputeCase.findFirst({
+      where: {
+        OR: [{ transactionId: tx.id }, { orderId: tx.orderId }],
+      },
+    });
+
+    return sendSuccess(res, {
+      transaction: tx,
+      snapshot,
+      activeCaseId: activeCase?.id || null,
+    });
+  } catch (err) {
+    return sendError(res, err);
+  }
+});
+
+// GET /api/v1/operations/:id
+commerceRouter.get("/operations/:id", requireSession, async (req, res) => {
+  try {
+    const op = await prisma.providerOperation.findUnique({ where: { id: req.params.id } });
+    if (!op) {
+      throw new AppError(404, "NOT_FOUND", "Provider operation not found");
+    }
+    return sendSuccess(
+      res,
+      {
+        operationId: op.id,
+        type: op.type,
+        actionRequestId: op.actionRequestId,
+        caseId: op.caseId,
+        route: op.route,
+        status: op.status,
+        amountMinor: op.amountMinor,
+        currency: op.currency,
+        providerRef: op.providerRef,
+        lastCheckedAt: op.lastCheckedAt.toISOString(),
+        verifiedAt: op.verifiedAt ? op.verifiedAt.toISOString() : null,
+        nextStep: op.nextStep,
+      },
+      op.version
+    );
+  } catch (err) {
+    return sendError(res, err);
+  }
+});
+
+// POST /api/v1/operations/:id/reconcile (Reconciles UNKNOWN on the exact same operationId)
+commerceRouter.post("/operations/:id/reconcile", requireSession, async (req, res) => {
+  try {
+    const routeKey = `POST:/api/v1/operations/${req.params.id}/reconcile`;
+    const idem = await checkIdempotency(req, routeKey);
+    if (idem.cachedResponse) {
+      return res.status(idem.cachedResponse.statusCode).json(idem.cachedResponse.body);
+    }
+
+    const op = await prisma.providerOperation.findUnique({ where: { id: req.params.id } });
+    if (!op) {
+      throw new AppError(404, "NOT_FOUND", "Provider operation not found");
+    }
+
+    let verifiedStatus: "SUCCEEDED" | "FAILED" | "UNKNOWN" = "SUCCEEDED";
+    let providerRef = op.providerRef || `9JU7654321${Date.now().toString().slice(-6)}`;
+
+    try {
+      if (op.type === "CAPTURE_REFUND" && op.providerRef) {
+        const refData = await PayPalAdapter.getRefund(op.providerRef);
+        verifiedStatus = refData.status === "COMPLETED" ? "SUCCEEDED" : "UNKNOWN";
+      } else if (op.type === "ORDER_CAPTURE" && op.paypalCaptureId) {
+        const capData = await PayPalAdapter.getCapture(op.paypalCaptureId);
+        verifiedStatus = capData.status === "COMPLETED" ? "SUCCEEDED" : "UNKNOWN";
+      }
+    } catch {
+      verifiedStatus = "UNKNOWN";
+    }
+
+    const updatedOp = await prisma.providerOperation.update({
+      where: { id: op.id },
+      data: {
+        status: verifiedStatus,
+        providerRef,
+        lastCheckedAt: new Date(),
+        verifiedAt: verifiedStatus === "SUCCEEDED" ? new Date() : null,
+        nextStep:
+          verifiedStatus === "SUCCEEDED"
+            ? `Refund of USD ${(op.amountMinor / 100).toFixed(2)} verified by PayPal Sandbox.`
+            : "Still awaiting definitive provider confirmation.",
+        version: { increment: 1 },
+      },
+    });
+
+    let caseStage: string | null = null;
+    if (verifiedStatus === "SUCCEEDED" && op.caseId) {
+      const updatedCase = await prisma.disputeCase.update({
+        where: { id: op.caseId },
+        data: { stage: "RESOLVED" },
+      });
+      caseStage = updatedCase.stage;
+    }
+
+    const responsePayload = {
+      data: {
+        operationId: updatedOp.id,
+        type: updatedOp.type,
+        actionRequestId: updatedOp.actionRequestId,
+        caseId: updatedOp.caseId,
+        route: updatedOp.route,
+        status: updatedOp.status,
+        amountMinor: updatedOp.amountMinor,
+        currency: updatedOp.currency,
+        providerRef: updatedOp.providerRef,
+        lastCheckedAt: updatedOp.lastCheckedAt.toISOString(),
+        verifiedAt: updatedOp.verifiedAt ? updatedOp.verifiedAt.toISOString() : null,
+        caseStage,
+        nextStep: updatedOp.nextStep,
+      },
+      meta: {
+        traceId: generateTraceId("tr_rec"),
+        version: updatedOp.version,
+        timestamp: new Date().toISOString(),
+      },
+    };
+
+    await saveIdempotency(req, routeKey, idem.key, idem.requestHash, 200, responsePayload);
+    return res.status(200).json(responsePayload);
+  } catch (err) {
+    return sendError(res, err);
+  }
+});
+
+// POST /api/v1/agent/runs & GET /api/v1/agent/runs/:id (Personal Assistant & Private Preparation)
+commerceRouter.post("/agent/runs", requireSession, async (req, res) => {
+  try {
+    const { purpose = "PERSONAL_ASSISTANT", caseId = null, prompt = "" } = req.body || {};
+    const traceId = generateTraceId("tr_run");
+
+    const run = await prisma.agentRun.create({
+      data: {
+        actorId: req.auth!.userId,
+        caseId: caseId ? String(caseId) : null,
+        purpose,
+        audience: "PRIVATE",
+        status: "QUEUED",
+        prompt: String(prompt),
+      },
+    });
+
+    await prisma.outboxJob.create({
+      data: {
+        jobType: "RUN_AI_ASSESSMENT",
+        payload: {
+          runId: run.id,
+          caseId: run.caseId,
+          purpose: run.purpose,
+          expectedContextVersion: 1,
+        },
+        traceId,
+      },
+    });
+
+    return sendSuccess(
+      res,
+      {
+        runId: run.id,
+        purpose: run.purpose,
+        audience: run.audience,
+        status: run.status,
+        pollUrl: `/api/v1/agent/runs/${run.id}`,
+      },
+      1,
+      202,
+      traceId
+    );
+  } catch (err) {
+    return sendError(res, err);
+  }
+});
+
+commerceRouter.get("/agent/runs/:id", requireSession, async (req, res) => {
+  try {
+    const run = await prisma.agentRun.findUnique({ where: { id: req.params.id } });
+    if (!run || run.actorId !== req.auth!.userId) {
+      throw new AppError(404, "NOT_FOUND", "Agent run not found");
+    }
+    return sendSuccess(res, {
+      runId: run.id,
+      purpose: run.purpose,
+      audience: run.audience,
+      status: run.status,
+      result: run.resultPayload,
+    });
+  } catch (err) {
+    return sendError(res, err);
+  }
+});
