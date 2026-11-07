@@ -24,11 +24,15 @@ This checkout currently has no root Git repository or root npm workspace configu
 | Database | A read-only Prisma query connected successfully. It found 3 users, 3 workspaces, and 1 product at verification time. The Prisma schema and seed script are present. |
 | Express API | `http://localhost:4000/health` returned `ok: true`. Auth, commerce, dispute, admin, and internal route modules are present. |
 | Frontend | `http://localhost:3000/` returned HTTP 200. In API mode, `GET /api/v1/me/workspaces` through the frontend returned Express's `401 UNAUTHENTICATED` response because no session cookie was supplied; this confirms the rewrite reaches Express. Frontend `typecheck` passed after the ID/loading-state refactor. Authenticated browser data flow is not yet verified. |
-| PayPal | The adapter and `smoke:paypal` script exist. Sandbox credentials in `.env.example` are placeholders; a live PayPal smoke run was not performed during this verification. |
+| PayPal | The sandbox flow has been verified: OAuth2, order creation, capture, and full refund. Webhook signature verification has not been tested. Sandbox credentials in `.env.example` remain placeholders. |
 | AI and indexing | `apps/ai` is absent. The API worker is written to call the AI service at `localhost:8000`, so AI callbacks and Qdrant indexing through the AI service are not verified. Qdrant being up only verifies the container. |
-| Full dispute-to-refund flow | Not verified. The frontend documentation says mock financial execution returns `501` and does not claim a successful refund. |
+| Full dispute-to-refund flow | Browser end-to-end verification is blocked. The financial execution path requires Seller MFA authorization and PayPal capture/refund, but the UI correctly prevents Sellers from drafting or accepting proposals until the AI Service supplies an authoritative mediation draft. |
 
-The API code includes checkout and PayPal adapter paths, but their presence alone does not prove a successful sandbox capture/refund or a complete end-to-end workflow.
+## Current blocker
+
+End-to-end UI testing of the financial execution flow, including Seller MFA authorization and PayPal capture/refund, is currently blocked because the Python AI Service in `apps/ai` has not yet been implemented and integrated. The frontend correctly prevents the Seller from drafting or accepting proposals until it receives an authoritative mediation draft from that service. The next action is to implement and integrate `apps/ai`; after that, verify the complete dispute-to-refund workflow from the browser.
+
+The PayPal sandbox capture/refund flow is verified independently; its success does not verify the complete browser-based dispute-to-refund workflow.
 
 ## Run locally
 
@@ -95,7 +99,7 @@ After copying `.env.example`, open `apps/api/.env` in your editor. Database and 
 | `API_UPSTREAM` | Current local value is `http://localhost:4000`, the Express API. In mock mode it is not used; do not point API mode back at the frontend port. |
 | `MOCK_ALLOWED_ORIGINS` | Local mock origin allowlist for `localhost`, `127.0.0.1`, and `::1` on port `3000`. |
 
-Save `.env` and restart the API after changing it. To check PayPal credentials, run `npm.cmd run smoke:paypal` from `apps/api`. With valid sandbox credentials the script obtains an OAuth token and creates a sandbox order; it does not capture the order. With the example placeholder credentials, it uses the adapter's simulation path, so that run does not verify PayPal connectivity.
+Save `.env` after changing it. To repeat the PayPal sandbox capture and refund flow, run `npm.cmd run smoke:paypal` from `apps/api`. The script prints the PayPal approval URL, waits while you approve the order in a browser, then captures the order and refunds the captured USD 59.00. It requires valid sandbox credentials and refuses simulation mode or a non-sandbox PayPal host. The sandbox OAuth, order creation, capture, and full refund have been verified; this flow does not verify webhook signatures.
 
 ### 3. Start the frontend
 
@@ -120,11 +124,10 @@ The API-mode rewrite is verified, but the authenticated frontend-to-Express work
 
 ## Remaining integration work
 
-- Add and implement the Python AI service in `apps/ai`.
+- Implement the Python AI service in `apps/ai` and integrate its authoritative mediation draft with the frontend and Express API.
 - Connect the outbox worker to the AI service and verify the directional service-token flows.
 - Verify real source scanning/indexing and revocation behavior with Qdrant through the AI service.
-- Verify the browser against Express in API mode, including auth, case flows, and evidence handling.
-- Run a complete sandbox dispute-to-refund workflow and confirm each provider result before marking it complete.
+- Unblock browser testing of Seller proposal drafting/acceptance, MFA financial authorization, and the PayPal-backed dispute-to-refund workflow; then verify the complete flow against Express in API mode.
 
 ## Contract and implementation notes
 

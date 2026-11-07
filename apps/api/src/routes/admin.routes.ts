@@ -410,87 +410,107 @@ adminRouter.post("/action-requests/:id/execute", requireSession, async (req, res
       throw new AppError(422, "POLICY_DENIED", "Insufficient remaining refundable balance on capture");
     }
 
-    // Claim ActionRequest atomically
-    const claimed = await prisma.actionRequest.updateMany({
-      where: { id: actReq.id, status: "AWAITING_CONSENT" },
-      data: { status: "CLAIMED" },
-    });
-    if (claimed.count === 0) {
-      const existingOp = await prisma.providerOperation.findUnique({ where: { actionRequestId: actReq.id } });
-      if (existingOp) {
-        return sendSuccess(
-          res,
-          {
-            operationId: existingOp.id,
-            type: existingOp.type,
-            actionRequestId: actReq.id,
-            caseStage: c.stage,
-            operationStatus: existingOp.status,
-            pollUrl: `/api/v1/operations/${existingOp.id}`,
-          },
-          c.caseVersion,
-          202
-        );
-      }
-      throw new AppError(409, "VERSION_CONFLICT", "ActionRequest was already claimed or invalidated", false, c.caseVersion);
+    const existingOp = await prisma.providerOperation.findUnique({ where: { actionRequestId: actReq.id } });
+    if (existingOp) {
+      return sendSuccess(
+        res,
+        {
+          operationId: existingOp.id,
+          type: existingOp.type,
+          actionRequestId: actReq.id,
+          caseStage: c.stage,
+          operationStatus: existingOp.status,
+          pollUrl: `/api/v1/operations/${existingOp.id}`,
+        },
+        c.caseVersion,
+        202
+      );
     }
 
-    // Reserve refundable balance immediately
-    await prisma.transaction.update({
-      where: { id: tx.id },
-      data: { refundableRemainingMinor: { decrement: actReq.amountMinor } },
-    });
-
-    let opStatus: "SUCCEEDED" | "UNKNOWN" = "SUCCEEDED";
-    let providerRef: string | null = null;
-
+    // Execute the provider request before changing business records. PayPal's
+    // request ID is stable so a retry after a network timeout cannot issue a
+    // second refund.
+    let refundRes: Awaited<ReturnType<typeof PayPalAdapter.refundCapture>>;
     try {
-      const refundRes = await PayPalAdapter.refundCapture({
+      refundRes = await PayPalAdapter.refundCapture({
         captureId: tx.paypalCaptureId,
         amountMinor: actReq.amountMinor,
         currency: actReq.currency,
         note: `VelaPal voluntary settlement for case ${c.id}`,
         requestId: `pp-ref-${actReq.id}`,
       });
-      providerRef = refundRes.id;
-    } catch {
-      opStatus = "UNKNOWN";
+      if (!refundRes.id || refundRes.status !== "COMPLETED") {
+        throw new Error(`PayPal refund was not completed (status: ${refundRes.status || "missing"})`);
+      }
+    } catch (err) {
+      const traceId = generateTraceId("tr_ref");
+      console.error(`[PAYPAL REFUND ${traceId}]`, err);
+      throw new AppError(502, "PAYMENT_PROVIDER_ERROR", "PayPal could not confirm the requested refund", true);
     }
 
-    const newCaseStage = opStatus === "SUCCEEDED" ? "RESOLVED" : "EXECUTION_UNKNOWN";
-    const operation = await prisma.providerOperation.create({
-      data: {
-        type: "CAPTURE_REFUND",
-        actionRequestId: actReq.id,
-        caseId: c.id,
-        route: actReq.route,
-        status: opStatus,
-        amountMinor: actReq.amountMinor,
-        currency: actReq.currency,
-        paypalCaptureId: tx.paypalCaptureId,
-        providerRef,
-        requestIdKey: `op-ref-${actReq.id}`,
-        verifiedAt: opStatus === "SUCCEEDED" ? new Date() : null,
-        nextStep:
-          opStatus === "SUCCEEDED"
-            ? `Refund of USD ${(actReq.amountMinor / 100).toFixed(2)} verified by PayPal Sandbox.`
-            : "Provider timed out. Use Reconcile on this operationId without sending a second refund.",
-      },
-    });
+    const traceId = generateTraceId("tr_ref");
+    const { operation, updatedCase } = await prisma.$transaction(async (db) => {
+      const claimed = await db.actionRequest.updateMany({
+        where: { id: actReq.id, status: "AWAITING_CONSENT" },
+        data: { status: "COMPLETED" },
+      });
+      if (claimed.count === 0) {
+        throw new AppError(409, "VERSION_CONFLICT", "ActionRequest was already executed or invalidated", false, c.caseVersion);
+      }
 
-    await prisma.disputeCase.update({
-      where: { id: c.id },
-      data: { stage: newCaseStage as any },
-    });
+      const balanceUpdate = await db.transaction.updateMany({
+        where: { id: tx.id, refundableRemainingMinor: { gte: actReq.amountMinor } },
+        data: { refundableRemainingMinor: { decrement: actReq.amountMinor } },
+      });
+      if (balanceUpdate.count === 0) {
+        throw new AppError(409, "VERSION_CONFLICT", "Refundable balance changed before the refund was recorded", false, c.caseVersion);
+      }
 
-    if (opStatus === "SUCCEEDED") {
-      await prisma.transaction.update({
+      const updatedTx = await db.transaction.findUniqueOrThrow({ where: { id: tx.id } });
+      const recordedTx = await db.transaction.update({
         where: { id: tx.id },
         data: {
-          paymentStatus: tx.refundableRemainingMinor - actReq.amountMinor <= 0 ? "REFUNDED" : "PARTIALLY_REFUNDED",
+          paymentStatus: updatedTx.refundableRemainingMinor === 0 ? "REFUNDED" : "PARTIALLY_REFUNDED",
         },
       });
-    }
+      const op = await db.providerOperation.create({
+        data: {
+          type: "CAPTURE_REFUND",
+          actionRequestId: actReq.id,
+          caseId: c.id,
+          route: actReq.route,
+          status: "SUCCEEDED",
+          amountMinor: actReq.amountMinor,
+          currency: actReq.currency,
+          paypalCaptureId: tx.paypalCaptureId,
+          providerRef: refundRes.id,
+          requestIdKey: `op-ref-${actReq.id}`,
+          verifiedAt: new Date(),
+          nextStep: `Refund of ${actReq.currency} ${(actReq.amountMinor / 100).toFixed(2)} verified by PayPal.`,
+        },
+      });
+      const updated = await db.disputeCase.update({
+        where: { id: c.id },
+        data: { stage: "RESOLVED", caseVersion: { increment: 1 } },
+      });
+      await db.auditEvent.create({
+        data: {
+          eventName: "FINANCIAL_EXECUTION_SUCCEEDED",
+          actorId: req.auth!.userId,
+          workspaceId: req.auth!.workspaceId,
+          actorParty: "SELLER",
+          targetType: "DISPUTE_CASE",
+          targetId: c.id,
+          summary: `PayPal refund of ${actReq.currency} ${(actReq.amountMinor / 100).toFixed(2)} completed (${recordedTx.paymentStatus})`,
+          caseVersion: updated.caseVersion,
+          controlVersion: updated.controlVersion,
+          traceId,
+        },
+      });
+      return { operation: op, updatedCase: updated };
+    });
+
+    const newCaseStage = updatedCase.stage;
 
     const responsePayload = {
       data: {
@@ -502,8 +522,8 @@ adminRouter.post("/action-requests/:id/execute", requireSession, async (req, res
         pollUrl: `/api/v1/operations/${operation.id}`,
       },
       meta: {
-        traceId: generateTraceId("tr_exec"),
-        version: c.caseVersion,
+        traceId,
+        version: updatedCase.caseVersion,
         timestamp: new Date().toISOString(),
       },
     };
