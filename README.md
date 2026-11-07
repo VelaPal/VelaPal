@@ -53,7 +53,15 @@ npm.cmd run seed
 npm.cmd run dev
 ```
 
-The API listens on `http://localhost:4000`. The local seed account password is `correct-horse-battery-staple`; admin login also requires the demo MFA code `123456`. PayPal credentials are optional for local mock/simulation behavior and must be replaced with valid sandbox credentials to test PayPal against the sandbox.
+The API listens on `http://localhost:4000`. After starting the API and frontend in API mode, open `http://localhost:3000/login` and use one of these Express seed accounts:
+
+| Role | Email | Password | MFA |
+| --- | --- | --- | --- |
+| Customer | `customer@velapal.demo` | `correct-horse-battery-staple` | Not required |
+| Seller | `seller@velapal.demo` | `correct-horse-battery-staple` | Not required |
+| Admin | `admin@velapal.demo` | `correct-horse-battery-staple` | Enter `123456` when prompted |
+
+These are backend seed credentials, distinct from the mock-only accounts documented in [apps/web/README.md](apps/web/README.md). To create them in a fresh database, run `npm.cmd run seed` from `apps/api`. The seed uses upserts without overwriting existing users, so rerunning it does not reset a password that was changed earlier. PayPal credentials are optional for local mock/simulation behavior and must be replaced with valid sandbox credentials to test PayPal against the sandbox.
 
 ### Where the API `.env` values come from
 

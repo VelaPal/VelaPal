@@ -19,6 +19,8 @@ If `npm run dev` reports `EADDRINUSE`, another process is already listening on p
 
 This checkout's `.env.local` currently uses `NEXT_PUBLIC_API_MODE=api` and `API_UPSTREAM=http://localhost:4000`. A protected API request through the frontend returned Express's `401 UNAUTHENTICATED` response without a session cookie, confirming the rewrite; authenticated browser flows still need end-to-end verification. The `.env.example` defaults to mock mode with `API_UPSTREAM=http://localhost:3000`; in mock mode that upstream is intentionally unused. `MOCK_ALLOWED_ORIGINS` applies to the embedded mock. Cookie sessions, CSRF, scoped MFA, role isolation and upload tokens remain enforced.
 
+For API mode, sign in at `/login` using the Express seed accounts and password listed in the [root README](../../README.md#2-configure-and-start-the-api). The credentials in the table below work only in mock mode and are different from the Express seed credentials.
+
 For production preview, run `npm run build`, then `npm start`, and open the same URL. Mock records are synthetic and reset when the Next.js process restarts; browser-local P1 previews can be reset in Settings.
 
 Development uses Next.js `instantInsights.validationLevel: "manual-warning"`: only routes explicitly opting into instant-navigation validation are checked. Protected workspace pages wait for client session recovery and can be omitted during automatic validation. Cache Components, partial prefetching and authentication remain enabled.
