@@ -854,15 +854,17 @@ Contest a finding or request human supervisor review. Transitions `control` to `
 
 ### 4.13 `POST /api/v1/action-requests/:id/consents` (P0)
 Records party approval or rejection for `ACCEPT_PROPOSAL_TERMS` or `AUTHORIZE_FINANCIAL_EXECUTION`.
+* **Seller financial authorization requires step-up MFA.** The Seller creates a challenge with `POST /api/v1/auth/mfa/challenges` using `purpose: "MERCHANT_EXECUTION"` and `targetId` equal to the `:id` action-request ID. The Seller verifies that challenge with `POST /api/v1/auth/mfa/verify` and the demo OTP `123456`, then sends the returned `stepUpId` token in this consent request. The OTP is used only for challenge verification; it is not the `stepUpId`. The API validates that the token belongs to the authenticated Seller, has the `MERCHANT_EXECUTION` purpose, is valid and unexpired, and is bound to this action request.
+* **`stepUpId` requirement:** Required for a Seller's `AUTHORIZE_FINANCIAL_EXECUTION` intent. It may be `null` for ordinary `ACCEPT_PROPOSAL_TERMS` consent, which does not require this financial step-up.
 * **Headers:** `If-Match: "1"` *(matches `proposalVersion: 1`)*
-* **Request Body:**
+* **Request Body (Seller financial authorization):**
   ```json
   {
     "paramsHash": "sha256_params_77b2c1...",
     "caseVersion": 6,
-    "intent": "ACCEPT_PROPOSAL_TERMS",
+    "intent": "AUTHORIZE_FINANCIAL_EXECUTION",
     "decision": "APPROVED",
-    "stepUpId": null
+    "stepUpId": "tok_abc123"
   }
   ```
 * **Response `200 OK`:**
@@ -871,8 +873,8 @@ Records party approval or rejection for `ACCEPT_PROPOSAL_TERMS` or `AUTHORIZE_FI
     "data": {
       "consentId": "con_01JBYG",
       "actionRequestId": "act_01JBYX",
-      "party": "CUSTOMER",
-      "intent": "ACCEPT_PROPOSAL_TERMS",
+      "party": "SELLER",
+      "intent": "AUTHORIZE_FINANCIAL_EXECUTION",
       "decision": "APPROVED",
       "paramsHash": "sha256_params_77b2c1...",
       "allRequiredConsentsMet": true,
@@ -880,6 +882,18 @@ Records party approval or rejection for `ACCEPT_PROPOSAL_TERMS` or `AUTHORIZE_FI
       "expiresAt": "2026-11-05T15:20:00.000Z"
     },
     "meta": { "traceId": "tr_con_01", "version": 6, "timestamp": "2026-11-05T14:22:00.000Z" }
+  }
+  ```
+* **Error `403 Forbidden` (`STEP_UP_REQUIRED`):** Returned before recording the financial consent if `stepUpId` is missing, invalid, expired, belongs to another user, has a different purpose, or is not bound to this action request.
+  ```json
+  {
+    "error": {
+      "code": "STEP_UP_REQUIRED",
+      "message": "Step-up verification is invalid, expired, or bound to a different target",
+      "fieldErrors": {},
+      "traceId": "tr_stepup_01",
+      "retryable": false
+    }
   }
   ```
 
