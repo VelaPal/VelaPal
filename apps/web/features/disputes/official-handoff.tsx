@@ -7,7 +7,9 @@ export default function OfficialHandoff({ detail }: { detail: DisputeDetail }) {
   const [open, setOpen] = useState(false);
   const [reviewed, setReviewed] = useState(false);
   const [done, setDone] = useState(false);
-  const shared = detail.sources.filter((s) => s.audience === "CASE_SHARED");
+  const shared = (detail.sources ?? []).filter(
+    (s) => s?.audience === "CASE_SHARED",
+  );
   return (
     <Panel title="Official channel handoff">
       <p className="vp-section-description">
@@ -56,8 +58,8 @@ export default function OfficialHandoff({ detail }: { detail: DisputeDetail }) {
             <div>
               <dt>Provider operation</dt>
               <dd>
-                {detail.providerOperation.operationId ?? "Not submitted"} ·{" "}
-                {detail.providerOperation.status}
+                {detail.providerOperation?.operationId ?? "Not submitted"} ·{" "}
+                {detail.providerOperation?.status ?? "Unknown"}
               </dd>
             </div>
           </dl>

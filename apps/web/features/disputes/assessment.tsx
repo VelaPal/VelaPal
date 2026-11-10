@@ -10,7 +10,7 @@ function Citations({
 }) {
   return (
     <span className="mt-1 flex flex-wrap gap-2">
-      {refs?.map((r, i) => (
+      {(refs ?? []).map((r, i) => (
         <a
           className="vp-link !min-h-8 break-all !text-xs"
           key={i}
@@ -56,8 +56,8 @@ export default function Assessment({
             {((items as typeof a.verifiedFacts | undefined) ?? []).map((f, i) => (
               <li key={i}>
                 {"party" in f && <strong>{String(f.party)}: </strong>}
-                {f.text}
-                <Citations refs={f.sourceRefs} onSource={onSource} />
+                {f.text ?? "No details supplied."}
+                <Citations refs={f.sourceRefs ?? []} onSource={onSource} />
               </li>
             ))}
           </ul>
@@ -70,7 +70,7 @@ export default function Assessment({
         <h3 className="font-semibold">Missing evidence</h3>
         {a.missingEvidence?.length ? (
           <ul className="mt-2 list-inside list-disc">
-            {a.missingEvidence?.map((x) => (
+            {(a.missingEvidence ?? []).map((x) => (
               <li key={x}>{x}</li>
             ))}
           </ul>
@@ -80,10 +80,11 @@ export default function Assessment({
       </div>
       <p>
         <strong>Suggested next action:</strong>{" "}
-        {a.nextStep.replaceAll("_", " ")}
+        {a.nextStep?.replaceAll("_", " ") || "Unknown"}
       </p>
       <p>
-        Policy references: {a.policyReferences.join(", ") || "None supplied"}
+        Policy references: {(a.policyReferences ?? []).join(", ") ||
+          "None supplied"}
       </p>
       {a.requiresHumanApproval && (
         <p className="text-amber-800">

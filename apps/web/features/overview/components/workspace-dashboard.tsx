@@ -168,7 +168,7 @@ function CaseAttention({
           <Scale size={17} aria-hidden="true" />
           <div>
             <strong>
-              {current.category.replaceAll("_", " ").toLowerCase()}
+              {current.category?.replaceAll("_", " ").toLowerCase() || "Unknown category"}
             </strong>
             <p>
               Review shared evidence, respond to the claim, and follow the next
@@ -207,7 +207,7 @@ function CaseAttention({
             </span>
             <div>
               <strong>
-                {current.category.replaceAll("_", " ").toLowerCase()}
+                {current.category?.replaceAll("_", " ").toLowerCase() || "Unknown category"}
               </strong>
               <small>{current.id}</small>
             </div>
@@ -299,7 +299,7 @@ export default function WorkspaceDashboard() {
         <div>
           <p className="vp-eyebrow">
             {seller
-              ? session?.activeWorkspace.name.toUpperCase()
+              ? session?.activeWorkspace.name?.toUpperCase() ?? "SELLER WORKSPACE"
               : "YOUR PERSONAL WORKSPACE"}
           </p>
           <h1>
@@ -511,12 +511,12 @@ export default function WorkspaceDashboard() {
                         <Link href={`/workspace/cases/${c.id}`}>
                           {c.control === "WAITING_ADMIN"
                             ? "Needs human review"
-                            : c.stage.replaceAll("_", " ").toLowerCase()}
+                            : c.stage?.replaceAll("_", " ").toLowerCase() || "Unknown status"}
                         </Link>
                         <p>{c.id}</p>
                         <small>
                           Case v{c.caseVersion} ·{" "}
-                          {c.initiatorParty.toLowerCase()} report
+                          {c.initiatorParty?.toLowerCase() || "Unknown party"} report
                         </small>
                       </div>
                     </li>

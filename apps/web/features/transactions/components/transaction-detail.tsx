@@ -28,22 +28,22 @@ export default function TransactionDetail({
         },
         {
           label: "Quantity",
-          value: String(transaction.snapshot.quantity),
+          value: String(transaction.snapshot?.quantity ?? "-"),
         },
         {
           label: "Snapshot total",
           value: formatMoney(
-            transaction.snapshot.unitPriceCents,
+            transaction.snapshot?.unitPriceCents ?? 0,
             transaction.currency,
           ),
         },
         {
           label: "Snapshot binding",
-          value: transaction.snapshot.termsVersion,
+          value: transaction.snapshot?.termsVersion ?? "-",
         },
         {
           label: "Approved at (UTC)",
-          value: transaction.snapshot.approvedAt
+          value: transaction.snapshot?.approvedAt
             ? formatDate(transaction.snapshot.approvedAt)
             : "Not supplied",
         },
@@ -113,10 +113,10 @@ export default function TransactionDetail({
                 Purchase agreement
               </h2>
               <p className="mt-2 text-sm font-medium text-slate-700">
-                {transaction.snapshot.productName}
+                {transaction.snapshot?.productName ?? "Purchase details unavailable"}
               </p>
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                {transaction.snapshot.description}
+                {transaction.snapshot?.description ?? "No description supplied."}
               </p>
             </div>
           </section>

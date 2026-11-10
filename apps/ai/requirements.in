@@ -1,0 +1,9 @@
+fastapi>=0.115,<1
+pydantic>=2.10,<3
+httpx[socks]>=0.28,<1
+uvicorn>=0.34,<1
+python-dotenv>=1,<2
+langgraph>=1,<2
+langgraph-checkpoint-sqlite>=3,<4
+pypdf>=6,<8
+pillow>=11,<14

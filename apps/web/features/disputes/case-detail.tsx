@@ -121,15 +121,16 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
         </p>
         <h1 className="break-all text-2xl font-semibold">{caseId}</h1>
         <p className="text-sm text-slate-600">
-          {c.category.replaceAll("_", " ")} · Opened by {c.initiatorParty}
+          {c.category?.replaceAll("_", " ") || "Unknown category"} · Opened
+          by {c.initiatorParty ?? "Unknown party"}
         </p>
         <div className="flex flex-wrap gap-2">
           <Badge>Stage: {c.stage}</Badge>
           <Badge>Control: {c.control}</Badge>
-          <Badge>Provider: {d.providerOperation.status}</Badge>
+          <Badge>Provider: {d.providerOperation?.status ?? "UNKNOWN"}</Badge>
         </div>
         <p className="text-sm">
-          Next step: {c.nextAction.replaceAll("_", " ")}
+          Next step: {c.nextAction?.replaceAll("_", " ") || "Unknown"}
         </p>
         <p className="text-xs text-slate-500">
           Case v{c.caseVersion} · Your private context v
@@ -167,23 +168,23 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
               <div>
                 <h3 className="font-medium">Customer statement</h3>
                 <p className="mt-2 text-sm">
-                  {d.perspectives.customerStatement ?? "Awaiting statement"}
+                  {d.perspectives?.customerStatement ?? "Awaiting statement"}
                 </p>
               </div>
               <div>
                 <h3 className="font-medium">Seller statement</h3>
                 <p className="mt-2 text-sm">
-                  {d.perspectives.sellerStatement ?? "Awaiting statement"}
+                  {d.perspectives?.sellerStatement ?? "Awaiting statement"}
                 </p>
               </div>
             </div>
           </Panel>
           <Panel title="Evidence & access">
             <Evidence
-              sources={d.sources}
+              sources={d.sources ?? []}
               caseId={caseId}
               refresh={refresh}
-              canUpload={c.capabilities.canShareEvidence}
+              canUpload={c.capabilities?.canShareEvidence ?? false}
             />
           </Panel>
         </>
@@ -219,7 +220,7 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
             onSubmit={(e) => {
               e.preventDefault();
               void action.run(async () => {
-                const sourceRefs: SourceRef[] = d.sources
+                const sourceRefs: SourceRef[] = (d.sources ?? [])
                   .filter((s) => refs.includes(s.sourceId))
                   .map((s) => ({
                     sourceId: s.sourceId,
@@ -230,7 +231,7 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
                   audience === "CASE_SHARED" &&
                   sourceRefs.some(
                     (r) =>
-                      d.sources.find((s) => s.sourceId === r.sourceId)
+                      d.sources?.find((s) => s.sourceId === r.sourceId)
                         ?.audience !== "CASE_SHARED",
                   )
                 )
@@ -280,7 +281,7 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
               <legend className="mb-2 text-sm font-medium">
                 Cite available evidence
               </legend>
-              {d.sources
+              {(d.sources ?? [])
                 .filter(
                   (s) =>
                     s.scanState === "CLEAN" &&
@@ -308,7 +309,7 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
             </fieldset>
             <button
               className="vp-button"
-              disabled={action.busy || !c.capabilities.canPostMessage}
+              disabled={action.busy || !c.capabilities?.canPostMessage}
             >
               Save {audience === "PRIVATE" ? "private note" : "shared response"}
             </button>
@@ -377,7 +378,7 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
                   reason,
                   contestedFindingIds:
                     assessment?.findings
-                      .filter((f) => f.kind === "CONFLICT")
+                      ?.filter((f) => f.kind === "CONFLICT")
                       .map((f) => f.findingId) ?? [],
                   newSourceRefs: [],
                 });
@@ -397,7 +398,7 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
             </label>
             <button
               className="vp-secondary"
-              disabled={action.busy || !c.capabilities.canRequestReview}
+              disabled={action.busy || !c.capabilities?.canRequestReview}
             >
               Request human review
             </button>
@@ -531,7 +532,7 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
                       setRoute(e.target.value as SettlementRoute)
                     }
                   >
-                    {c.capabilities.supportedSettlementRoutes?.map((r) => (
+                    {c.capabilities?.supportedSettlementRoutes?.map((r) => (
                       <option key={r}>{r}</option>
                     ))}
                   </select>
@@ -542,7 +543,7 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
                 disabled={
                   action.busy ||
                   !bindings ||
-                  !c.capabilities.canProposeTerms ||
+                  !c.capabilities?.canProposeTerms ||
                   c.control !== "RUNNING"
                 }
               >
@@ -559,7 +560,10 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
                 </div>
                 <p className="whitespace-pre-wrap">{p.terms}</p>
                 <p className="text-xl font-semibold">
-                  {formatMoney(p.money.amountMinor, p.money.currency)}
+                  {formatMoney(
+                    p.money?.amountMinor ?? 0,
+                    p.money?.currency ?? "USD",
+                  )}
                 </p>
                 <p>
                   {p.route} · Expires {formatDate(p.expiresAt)} UTC
@@ -591,7 +595,7 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
                       action.busy ||
                       !checked ||
                       p.caseVersion !== c.caseVersion ||
-                      !c.capabilities.canGrantConsent
+                      !c.capabilities?.canGrantConsent
                     }
                     onClick={() =>
                       void action.run(
@@ -633,9 +637,11 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
                     className="vp-button"
                     disabled={
                       action.busy ||
-                      !c.capabilities.canExecuteSettlement ||
-                      d.providerOperation.status === "UNKNOWN" ||
-                      d.pendingConsents.some((x) => x.status !== "APPROVED")
+                      !c.capabilities?.canExecuteSettlement ||
+                      d.providerOperation?.status === "UNKNOWN" ||
+                      (d.pendingConsents ?? []).some(
+                        (x) => x.status !== "APPROVED",
+                      )
                     }
                     onClick={() =>
                       void action.run(async () => {
@@ -653,7 +659,7 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
                     Submit authorized settlement
                   </button>
                 )}
-                {!c.capabilities.canExecuteSettlement && (
+                {!c.capabilities?.canExecuteSettlement && (
                   <p className="text-amber-800">
                     Financial execution unavailable for this case. No refund has
                     been executed.
@@ -672,7 +678,7 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
             detail={d}
           />
           <Panel title="Settlement operation">
-            {d.providerOperation.operationId ? (
+            {d.providerOperation?.operationId ? (
               <OperationTracker operationId={d.providerOperation.operationId} />
             ) : (
               <p className="text-sm text-slate-500">

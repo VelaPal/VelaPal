@@ -40,9 +40,7 @@ function getState(key: string) {
 }
 export function useAdminPreview() {
   const { session } = useSession();
-  const enabled =
-    process.env.NEXT_PUBLIC_API_MODE !== "api" &&
-    session?.activeWorkspace.type === "ADMIN";
+  const enabled = session?.activeWorkspace.type === "ADMIN";
   const key = `velapal:admin-preview:${session?.user.id}:${session?.activeWorkspace.id}`;
   const read = useCallback(
     () => (enabled ? getState(key) : fallback),

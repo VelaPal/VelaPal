@@ -1,0 +1,19 @@
+# Optional AI container. Express stays on your host unless your team containerizes it.
+# When using this optional container, Express API_INTERNAL_BASE_URL must also be
+# http://host.docker.internal:4000 so issued read handles match the AI origin.
+# docker compose -f docker-compose.yml -f docker-compose.ai.yml --profile ai up -d --build
+services:
+  ai:
+    profiles: [ai]
+    build: ./apps/ai
+    ports: ["127.0.0.1:8000:8000"]
+    env_file: ./apps/ai/.env
+    environment:
+      API_INTERNAL_BASE_URL: http://host.docker.internal:4000
+      QDRANT_URL: http://qdrant:6333
+      AI_DATA_DIR: /app/data
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["ai_graph:/app/data"]
+    depends_on: [qdrant]
+volumes:
+  ai_graph:

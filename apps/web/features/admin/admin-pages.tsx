@@ -1084,12 +1084,12 @@ export function AdminAuditPage() {
     ...(enabled ? state.audit : []),
     ...(events.data?.items ?? []).map((e) => ({
       id: e.auditId,
-      at: e.createdAt,
-      actor: e.actorId,
-      role: e.actorId.startsWith("usr_admin") ? "admin" : "system",
-      action: e.eventName,
-      target: e.targetId,
-      reason: e.reason,
+      at: e.createdAt ?? "",
+      actor: e.actorId ?? "Unknown actor",
+      role: (e.actorId ?? "").startsWith("usr_admin") ? "admin" : "system",
+      action: e.eventName ?? "Unknown event",
+      target: e.targetId ?? "Unknown target",
+      reason: e.reason ?? "No reason supplied",
     })),
   ]
     .filter(
@@ -1099,7 +1099,7 @@ export function AdminAuditPage() {
           .toLowerCase()
           .includes(query.toLowerCase()),
     )
-    .sort((a, b) => b.at.localeCompare(a.at));
+    .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
   return (
     <div className="vp-admin-page">
       <AdminHeading
@@ -1167,7 +1167,7 @@ export function AdminAuditPage() {
             </td>
             <td>{e.action}</td>
             <td>
-              {e.target.startsWith("case_") ? (
+              {e.target?.startsWith("case_") ? (
                 <Link className="vp-link" href={`/workspace/admin/${e.target}`}>
                   {e.target}
                 </Link>
@@ -1205,13 +1205,13 @@ export function RecentAdminPreviewActivity() {
     ...state.audit,
     ...(events.data?.items ?? []).map((e) => ({
       id: e.auditId,
-      at: e.createdAt,
-      actor: e.actorId,
-      action: e.eventName,
-      target: e.targetId,
+      at: e.createdAt ?? "",
+      actor: e.actorId ?? "Unknown actor",
+      action: e.eventName ?? "Unknown event",
+      target: e.targetId ?? "Unknown target",
     })),
   ]
-    .sort((a, b) => b.at.localeCompare(a.at))
+    .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""))
     .slice(0, 4);
   if (!enabled) return null;
   return (

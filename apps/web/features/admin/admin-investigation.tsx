@@ -131,6 +131,20 @@ export function AdminInvestigation({ caseId }: { caseId: string }) {
   if (session?.activeWorkspace.type !== "ADMIN")
     return <p role="alert">Admin workspace access required.</p>;
   const d = detail.data;
+  if (!d?.case)
+    return (
+      <div className="space-y-4">
+        <ErrorNotice error={detail.error} />
+        <p role="status">
+          {detail.error
+            ? "Investigation unavailable."
+            : "Loading investigation..."}
+        </p>
+        <button className="vp-secondary" onClick={() => void detail.mutate()}>
+          Retry
+        </button>
+      </div>
+    );
   return (
     <div className="vp-admin-page vp-admin-investigation">
       <Link className="vp-back-link" href="/workspace/admin">
@@ -140,16 +154,16 @@ export function AdminInvestigation({ caseId }: { caseId: string }) {
       <header className="vp-page-heading">
         <div>
           <p className="vp-eyebrow">
-            {caseId} / {d?.case.initiatorParty ?? "SHARED"}-INITIATED / CASE V
-            {d?.case.caseVersion ?? "-"}
+            {caseId} / {d.case.initiatorParty ?? "SHARED"}-INITIATED / CASE V
+            {d.case.caseVersion ?? "-"}
           </p>
           <h1 className="vp-case-category-title">
-            {d
+            {d?.case?.category
               ? d.case.category.replaceAll("_", " ").toLowerCase()
               : "Case investigation"}
           </h1>
           <p className="vp-admin-description">
-            {d?.case.transactionId ?? d?.case.orderId ?? caseId}
+            {d.case.transactionId ?? d.case.orderId ?? caseId}
           </p>
         </div>
         <button className="vp-secondary" onClick={() => void detail.mutate()}>
@@ -526,7 +540,9 @@ export function AdminInvestigation({ caseId }: { caseId: string }) {
                     ["Initiated by", d.case.initiatorParty],
                     [
                       "Category",
-                      d.case.category.replaceAll("_", " ").toLowerCase(),
+                      d?.case?.category
+                        ? d.case.category.replaceAll("_", " ").toLowerCase()
+                        : "-",
                     ],
                     [
                       "Assigned reviewer",

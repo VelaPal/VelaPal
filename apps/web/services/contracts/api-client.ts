@@ -103,10 +103,11 @@ export async function apiRequest<T>(
     });
   } catch (cause) {
     if (cause instanceof Error && cause.name === "AbortError") throw cause;
+    const reason = cause instanceof Error && cause.message ? `: ${cause.message}` : ".";
     throw new ApiError(
       0,
       "NETWORK_ERROR",
-      "Network request failed. Check operation status before retrying a financial action.",
+      `Network request failed${reason} Check that the API backend and API_UPSTREAM are available, then inspect browser network/CORS errors. Check operation status before retrying a financial action.`,
       "",
       true,
     );
@@ -121,7 +122,13 @@ export async function apiRequest<T>(
         timestamp: new Date().toISOString(),
       },
     };
-  const payload: unknown = await response.json().catch(() => null);
+  const responseBody = await response.text().catch(() => "");
+  let payload: unknown = null;
+  try {
+    payload = responseBody ? JSON.parse(responseBody) : null;
+  } catch {
+    payload = null;
+  }
   signal.throwIfAborted();
   if (!response.ok) {
     if (
@@ -139,7 +146,10 @@ export async function apiRequest<T>(
     throw new ApiError(
       response.status,
       error?.code ?? "HTTP_ERROR",
-      error?.message ?? `HTTP ${response.status}`,
+      error?.message ??
+        (responseBody.trim()
+          ? `HTTP ${response.status}: ${responseBody.trim().slice(0, 500)}`
+          : `HTTP ${response.status}`),
       error?.traceId ?? "",
       error?.retryable ?? false,
       error?.fieldErrors ?? {},

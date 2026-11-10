@@ -100,13 +100,39 @@ export const disputesService = {
     }),
   /** Upload bytes to short-lived handle URL with a direct PUT, then call finalize. Never send browser CSRF or session cookie to unrelated object storage origins. */
   async uploadBytes(handle: { method: "PUT"; url: string }, blob: Blob) {
-    const response = await fetch(handle.url, {
-      method: "PUT",
-      body: blob,
-      credentials: "omit",
-      signal: workspaceRequestSignal(),
-    });
-    if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
+    let response: Response;
+    try {
+      response = await fetch(handle.url, {
+        method: "PUT",
+        body: blob,
+        credentials: "omit",
+        signal: workspaceRequestSignal(),
+      });
+    } catch (cause) {
+      if (cause instanceof Error && cause.name === "AbortError") throw cause;
+      const detail = cause instanceof Error ? ` (${cause.message})` : "";
+      throw new Error(
+        `Direct upload failed before the storage server responded${detail}. Check the signed upload URL and storage CORS configuration.`,
+      );
+    }
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      let detail = body.trim();
+      try {
+        const parsed: unknown = JSON.parse(detail);
+        if (parsed && typeof parsed === "object") {
+          const value = parsed as { message?: unknown; error?: unknown };
+          detail =
+            (typeof value.message === "string" && value.message) ||
+            (typeof value.error === "string" && value.error) ||
+            detail;
+        }
+      } catch {}
+      if (detail.length > 500) detail = `${detail.slice(0, 500)}…`;
+      throw new Error(
+        `Upload failed: HTTP ${response.status}${detail ? ` — ${detail}` : ` (${response.statusText || "no response details"})`}`,
+      );
+    }
   },
   finalize: (
     caseId: string,

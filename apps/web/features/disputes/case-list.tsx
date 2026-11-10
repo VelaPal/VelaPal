@@ -59,7 +59,7 @@ export default function CaseList() {
       c.id,
       c.transactionId,
       c.orderId,
-      c.category.replaceAll("_", " "),
+      c.category?.replaceAll("_", " ") ?? "",
       transactions.data?.items?.find((t) => t.id === c.transactionId)
         ?.merchantName,
     ]
@@ -171,7 +171,10 @@ export default function CaseList() {
               <p className="vp-case-list-kicker">
                 {c.id} · {c.initiatorParty} REPORT
               </p>
-              <h2>{c.category.replaceAll("_", " ").toLowerCase()}</h2>
+            <h2>
+              {c.category?.replaceAll("_", " ").toLowerCase() ||
+                "Unknown category"}
+            </h2>
               <p className="vp-case-list-meta">
                 {c.transactionId ?? c.orderId}
                 {transactions.data?.items

@@ -1,0 +1,9 @@
+[project]
+name = "velapal-ai"
+version = "6.1.2"
+requires-python = ">=3.11"
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
