@@ -1,0 +1,74 @@
+"use client";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import useSWR from "swr";
+import { ArrowRight, Bell, BookOpen, Download, Repeat2, ShieldCheck } from "lucide-react";
+import { useSession } from "@/features/auth/session";
+import { Panel, ErrorNotice, useAction } from "@/components/ui/workflow";
+import { AdminBadge, AdminNotice } from "@/features/admin/admin-ui";
+import { formatMoney } from "@/lib/format";
+import { transactionsService } from "@/services/contracts/transactions.service";
+import { workspaceService } from "@/services/contracts/workspace.service";
+import type { WorkspaceProduct } from "@/services/contracts/workspace.service";
+import { WorkspaceHeading } from "./shared";
+
+export function ApiSubscriptions({ seller }: { seller: boolean }) {
+  const subs = useSWR("api-subscriptions", workspaceService.subscriptions);
+  const catalog = useSWR(seller ? null : "subscription-catalog", transactionsService.catalog);
+  const action = useAction();
+  const [cancelId, setCancelId] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  const [consent, setConsent] = useState(false);
+  const items = subs.data?.items ?? [];
+  const plans = catalog.data?.items.filter((p) => p.type === "SUBSCRIPTION") ?? [];
+  return <div className="vp-feature-page">
+    <WorkspaceHeading eyebrow="PAYPAL SUBSCRIPTIONS" title={seller ? "Customer subscriptions" : "Subscriptions, on your terms."} copy={seller ? "Provider-confirmed subscriptions for your merchant account." : "See and manage subscriptions confirmed by PayPal."} />
+    {subs.error && <ErrorNotice error={subs.error} />}{catalog.error && <ErrorNotice error={catalog.error} />}
+    {!subs.data ? <Panel title="Loading subscriptions"><p>Fetching provider-backed records…</p></Panel> : <>
+      {!subs.data.providerConfigured && <AdminNotice>PayPal API credentials are not configured. Existing records show their last backend-confirmed state; new subscriptions and provider updates are unavailable.</AdminNotice>}
+      {items.length === 0 ? <Panel title="No subscriptions found"><p>No PayPal subscription records are associated with this workspace.</p></Panel> : items.map((item) => <Panel key={item.id} title={item.productName}>
+        <div className="vp-admin-review"><div><dt>Status</dt><dd><AdminBadge>{item.status}</AdminBadge></dd></div><div><dt>Amount</dt><dd>{formatMoney(item.amountMinor, item.currency)} / month</dd></div><div><dt>Next billing</dt><dd>{item.nextBillingTime ? new Date(item.nextBillingTime).toLocaleString() : "Not provided by PayPal"}</dd></div><div><dt>PayPal subscription</dt><dd>{item.paypalSubscriptionId}</dd></div></div>
+      <SubscriptionPayments id={item.id} />
+      {!seller && ["ACTIVE", "APPROVED", "APPROVAL_PENDING"].includes(item.status) && <button className="vp-link mt-3" onClick={() => { setReason(""); setConsent(false); setCancelId(item.id); }}>Cancel through PayPal</button>}
+      </Panel>)}
+      {!seller && <Panel title="Available plans"><p className="vp-section-description">The subscription agreement and recurring amount come from the published seller catalogue and PayPal approval page.</p>{!catalog.data ? <p>Loading available plans…</p> : plans.length === 0 ? <p>No published subscription plans are available.</p> : plans.map((product) => <PlanRow key={product.id} product={product} busy={action.busy} onSubscribe={() => void action.run(async () => { const result = await workspaceService.subscribe(product.id); window.location.assign(result.approveUrl); }, "Redirecting to PayPal for approval.")} />)}</Panel>}
+    </>}
+    {action.feedback}{cancelId && <Panel title="Confirm cancellation"><form className="vp-auth-form" onSubmit={(e) => { e.preventDefault(); void action.run(async () => { const result = await workspaceService.cancelSubscription(cancelId, reason); await subs.mutate(); setCancelId(null); setReason(""); setConsent(false); }, "Cancellation request sent to PayPal. The displayed state refreshes from PayPal."); }}><label className="vp-label">Reason<textarea className="vp-input" minLength={10} required value={reason} onChange={(e) => setReason(e.target.value)} /></label><label className="vp-consent-label"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />I understand cancellation is sent to PayPal and will stop future renewals when PayPal confirms it.</label><div className="vp-intake-actions"><button type="button" className="vp-secondary" onClick={() => setCancelId(null)}>Keep subscription</button><button className="vp-button" disabled={!consent || reason.trim().length < 10 || action.busy}>Send cancellation</button></div></form></Panel>}
+  </div>;
+}
+function SubscriptionPayments({ id }: { id: string }) {
+  const [open, setOpen] = useState(false);
+  const history = useSWR(open ? ["subscription-transactions", id] : null, () => workspaceService.subscriptionTransactions(id));
+  return <div className="mt-3"><button className="vp-link" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{open ? "Hide billing history" : "View PayPal billing history"}</button>{open && (history.error ? <ErrorNotice error={history.error}/> : !history.data ? <p>Loading PayPal transactions…</p> : history.data.items.length === 0 ? <p>No PayPal billing transactions in the past 12 months.</p> : <ul className="vp-admin-review">{history.data.items.map((transaction) => <li key={transaction.id}>{new Date(transaction.time).toLocaleDateString()} · {transaction.status} · {transaction.amount?.value || "-"} {transaction.amount?.currency_code || ""}</li>)}</ul>)}</div>;
+}
+function PlanRow({ product, busy, onSubscribe }: { product: { id: string; name: string; merchantName?: string; amountMinor?: number; currency: string; subscriptionAvailable?: boolean }; busy: boolean; onSubscribe: () => void }) {
+  return <article className="vp-billing-row"><Repeat2 size={20}/><div><strong>{product.name}</strong><small>{product.merchantName || "Seller"} · {product.amountMinor === undefined ? "Price unavailable" : `${formatMoney(product.amountMinor, product.currency)} / month`}</small></div>{product.subscriptionAvailable ? <button className="vp-button" disabled={busy || product.amountMinor === undefined} onClick={onSubscribe}>Review with PayPal</button> : <AdminBadge>Seller PayPal authorization required</AdminBadge>}</article>;
+}
+
+export function ApiDigitalLibrary() {
+  const result = useSWR("api-digital-library", workspaceService.library);
+  return <div className="vp-feature-page"><WorkspaceHeading eyebrow="PURCHASED DIGITAL CONTENT" title="Your library." copy="Only paid API purchases appear here. Access is provided only when the seller has uploaded a verified file." />{result.error && <ErrorNotice error={result.error} />}{!result.data ? <Panel title="Loading your library"><p>Checking paid purchase records…</p></Panel> : result.data.items.length === 0 ? <Panel title="Nothing in your library yet"><BookOpen size={28}/><p>Paid digital purchases will appear here after payment confirmation.</p><Link className="vp-link" href="/workspace/catalog">Browse the catalogue <ArrowRight size={14}/></Link></Panel> : result.data.items.map((item) => <Panel key={item.transactionId} title={item.name}><div className="vp-admin-review"><div><dt>Merchant</dt><dd>{item.merchantName}</dd></div><div><dt>Purchase</dt><dd>{item.orderId} · {new Date(item.paidAt).toLocaleDateString()}</dd></div><div><dt>Agreement</dt><dd>{item.terms}</dd></div></div>{item.asset?.downloadUrl ? <a className="vp-button mt-4 inline-flex" href={item.asset.downloadUrl}><Download size={15}/> Download {item.asset.fileName}</a> : <AdminNotice>The payment is confirmed, but the seller has not uploaded a digital file for this product yet.</AdminNotice>}</Panel>)}</div>;
+}
+
+export function ApiNotifications({ role }: { role: "CUSTOMER" | "SELLER" }) {
+  const result = useSWR("api-notifications", workspaceService.notifications);
+  const action = useAction();
+  return <div className="vp-feature-page"><WorkspaceHeading eyebrow="YOUR UPDATES" title="A few things to keep in view." copy="Updates derived from your authorized transactions and cases." action={<button className="vp-secondary" disabled={!result.data?.items.some((n) => !n.read) || action.busy} onClick={() => void action.run(async () => { await workspaceService.readNotifications(); await result.mutate(); }, "Notifications marked as read.")}>Mark all as read</button>} />{result.error && <ErrorNotice error={result.error}/>} {result.data && !result.data.remindersEnabled && <AdminNotice>In-app reminders are disabled in your saved preferences. Updates are still listed here.</AdminNotice>}{!result.data ? <Panel title="Loading updates"><p>Checking authorized activity…</p></Panel> : result.data.items.length === 0 ? <Panel title="No updates"><p>New transaction and case activity will appear here.</p></Panel> : result.data.items.map((n) => <section className="vp-panel vp-notification-list" key={n.id}><Bell size={22}/><div>{!n.read && <p className="vp-eyebrow">New</p>}<h2>{n.title}</h2><p>{n.message}</p><small>{new Date(n.createdAt).toLocaleString()}</small><Link className="vp-link" href={n.href}>{role === "SELLER" ? "Review update" : "Open update"}<ArrowRight size={14}/></Link></div></section>)}{action.feedback}</div>;
+}
+
+export function ApiCustomerSettings() {
+  const { session } = useSession();
+  const result = useSWR("customer-preferences", workspaceService.preferences);
+  const [limit, setLimit] = useState("");
+  const action = useAction();
+  useEffect(() => { if (result.data) setLimit((result.data.defaultLimitMinor / 100).toFixed(2)); }, [result.data]);
+  return <div className="vp-feature-page"><WorkspaceHeading eyebrow="YOUR WORKSPACE, YOUR WAY" title="A few things, just for you." copy="Saved purchase safeguards and notification preferences." />{result.error && <ErrorNotice error={result.error}/>}<div className="vp-settings-grid"><Panel title="Profile"><div className="vp-settings-profile"><span className="vp-avatar">{session?.user.name?.charAt(0) || "?"}</span><div><h3>{session?.user.name || "Account"}</h3><p>{session?.user.email || ""}</p></div></div><p className="vp-form-note">Account identity is managed through VelaPal authentication.</p><Link className="vp-link" href="/workspace/merchant-application">Apply as a merchant <ArrowRight size={14}/></Link></Panel><Panel title="Purchase guardrail">{!result.data ? <p>Loading saved preference…</p> : <form className="vp-auth-form" onSubmit={(e) => { e.preventDefault(); const minor = Math.round(Number(limit) * 100); void action.run(async () => { await workspaceService.updatePreferences({ defaultLimitMinor: minor }); await result.mutate(); }, "Purchase limit saved to your account."); }}><label className="vp-label">Default purchase limit · USD<input className="vp-input" inputMode="decimal" type="number" min="0" step="0.01" required value={limit} onChange={(e) => setLimit(e.target.value)}/></label><button className="vp-button" disabled={action.busy}>Save limit</button></form>}<p className="vp-form-note">The backend applies this saved limit when creating a purchase quote.</p></Panel><Panel title="Notifications"><p className="vp-section-description">In-app updates for transactions and dispute cases.</p>{result.data && <button type="button" role="switch" aria-label="In-app reminders" aria-checked={result.data.remindersEnabled} disabled={action.busy} onClick={() => void action.run(async () => { await workspaceService.updatePreferences({ remindersEnabled: !result.data!.remindersEnabled }); await result.mutate(); }, "Notification preference saved.")}><span/>{result.data.remindersEnabled ? "On" : "Off"}</button>}</Panel><Panel title="PayPal"><ShieldCheck size={24}/><p className="vp-section-description">PayPal approval happens on the provider page for each purchase or subscription. VelaPal does not store your PayPal password.</p><AdminBadge>Provider authorization required per action</AdminBadge></Panel></div>{action.feedback}</div>;
+}
+
+export function ApiMerchantApplication() {
+  const result = useSWR("my-merchant-application", workspaceService.myApplication);
+  const [name, setName] = useState(""); const [website, setWebsite] = useState(""); const [category, setCategory] = useState("Physical & digital goods"); const [country, setCountry] = useState("Indonesia");
+  const action = useAction(); const application = result.data?.application;
+  useEffect(() => { if (application) { setName(application.name); setWebsite(application.website); setCategory(application.category); setCountry(application.country); } }, [application]);
+  return <div className="vp-feature-page"><WorkspaceHeading eyebrow="MERCHANT APPLICATION" title="A place for your business." copy="Your application is reviewed by VelaPal. Approval grants a Seller workspace; PayPal authorization is a separate provider step." />{result.error && <ErrorNotice error={result.error}/>}<Panel title="Application status">{!result.data ? <p>Loading application…</p> : application ? <><AdminBadge>{application.status}</AdminBadge><p className="vp-admin-description">{application.reviewNote}</p><p className="vp-form-note">Submitted {new Date(application.createdAt).toLocaleString()}. Review decisions are made by an administrator.</p></> : <p>No merchant application has been submitted.</p>}</Panel>{(!application || application.status === "REJECTED") && <Panel title={application ? "Review and resubmit" : "Business information"}><form className="vp-auth-form vp-business-form" onSubmit={(e) => { e.preventDefault(); void action.run(async () => { await workspaceService.submitApplication({ name, website, category, country }); await result.mutate(); }, "Merchant application submitted for administrator review."); }}><label className="vp-label">Business display name<input className="vp-input" required maxLength={120} value={name} onChange={(e) => setName(e.target.value)}/></label><label className="vp-label">Website<input className="vp-input" type="url" required value={website} onChange={(e) => setWebsite(e.target.value)}/></label><label className="vp-label">Category<select className="vp-input" value={category} onChange={(e) => setCategory(e.target.value)}>{["Physical & digital goods","Digital content","Physical goods","Services"].map((x) => <option key={x}>{x}</option>)}</select></label><label className="vp-label">Country<select className="vp-input" value={country} onChange={(e) => setCountry(e.target.value)}>{["Indonesia","Singapore","United States"].map((x) => <option key={x}>{x}</option>)}</select></label><label className="vp-consent-label"><input type="checkbox" required/>I reviewed these business details and authorize VelaPal to review this application.</label><button className="vp-button" disabled={action.busy}>Submit for review</button></form></Panel>}{action.feedback}</div>;
+}

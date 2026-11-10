@@ -14,21 +14,43 @@ commerceRouter.get("/catalog", requireSession, async (req, res) => {
   try {
     const { type } = req.query;
     const items = await prisma.product.findMany({
-      where: type ? { type: String(type) } : undefined,
+      where: { status: "PUBLISHED", ...(type ? { type: String(type).toUpperCase() } : {}) },
       orderBy: { createdAt: "asc" },
     });
+    const sellerWorkspaces = await prisma.workspace.findMany({
+      where: { type: "SELLER", merchantId: { in: [...new Set(items.map((p) => p.merchantId))] } },
+      select: { id: true, merchantId: true },
+    });
+    const sellerProfiles = await prisma.sellerProfile.findMany({
+      where: { workspaceId: { in: sellerWorkspaces.map((ws) => ws.id) } },
+      select: { workspaceId: true, paypalStatus: true, paypalSubscriptionEnabled: true },
+    });
+    let subscriptionAccess = false;
+    if (items.some((product) => product.type === "SUBSCRIPTION")) {
+      try { subscriptionAccess = await PayPalAdapter.hasSubscriptionsAccess(); } catch { subscriptionAccess = false; }
+    }
+    const paypalReady = new Set(sellerProfiles.filter((profile) => profile.paypalStatus === "ACTIVE" && profile.paypalSubscriptionEnabled).map((profile) => sellerWorkspaces.find((ws) => ws.id === profile.workspaceId)?.merchantId));
     return sendSuccess(res, {
       items: items.map((p) => ({
+        id: p.id,
         productId: p.id,
         merchantId: p.merchantId,
         merchantName: p.merchantName,
         sku: p.sku,
         name: p.name,
         type: p.type,
+        amountMinor: p.priceMinor,
         priceMinor: p.priceMinor,
         currency: p.currency,
-        variants: p.variants,
+        variants: (Array.isArray(p.variants) ? p.variants : []).map((variant: any) => ({
+          id: String(variant.variantId || variant.id || "DEFAULT"),
+          label: String(variant.label || variant.variantId || "Default"),
+          sku: String(variant.sku || p.sku),
+          amountMinor: Number(variant.priceMinor ?? variant.amountMinor ?? p.priceMinor),
+        })),
         catalogVersion: p.catalogVersion,
+        status: p.status,
+        subscriptionAvailable: p.type !== "SUBSCRIPTION" || (subscriptionAccess && paypalReady.has(p.merchantId)),
       })),
     });
   } catch (err) {
@@ -39,8 +61,8 @@ commerceRouter.get("/catalog", requireSession, async (req, res) => {
 // POST /api/v1/quotes
 commerceRouter.post("/quotes", requireSession, async (req, res) => {
   try {
-    const { productId, variantId, quantity = 1, spendingLimitMinor = 10000 } = req.body || {};
-    const product = await prisma.product.findUnique({ where: { id: String(productId) } });
+    const { productId, variantId, quantity = 1, spendingLimitMinor } = req.body || {};
+    const product = await prisma.product.findFirst({ where: { id: String(productId), status: "PUBLISHED" } });
     if (!product) {
       throw new AppError(404, "NOT_FOUND", "Product not found in catalog");
     }
@@ -48,7 +70,11 @@ commerceRouter.post("/quotes", requireSession, async (req, res) => {
     const selectedVariant = variants.find((v) => v.variantId === variantId) || variants[0];
     const unitMinor = selectedVariant ? Number(selectedVariant.priceMinor) : product.priceMinor;
     const amountMinor = unitMinor * Number(quantity);
-    const limitMinor = Number(spendingLimitMinor);
+    const preferences = await prisma.workspacePreference.findUnique({ where: { userId: req.auth!.userId } });
+    const limitMinor = Number(spendingLimitMinor ?? preferences?.defaultLimitMinor ?? 7500);
+    if (!Number.isSafeInteger(limitMinor) || limitMinor < 0 || !Number.isSafeInteger(Number(quantity)) || Number(quantity) < 1 || Number(quantity) > 100) {
+      throw new AppError(422, "VALIDATION_ERROR", "A nonnegative spending limit and quantity between 1 and 100 are required");
+    }
     const ruleResult = amountMinor > limitMinor ? "OVER_LIMIT" : "READY";
 
     const quote = await prisma.quote.create({
@@ -453,6 +479,23 @@ commerceRouter.post("/operations/:id/reconcile", requireSession, async (req, res
 commerceRouter.post("/agent/runs", requireSession, async (req, res) => {
   try {
     const { purpose = "PERSONAL_ASSISTANT", caseId = null, prompt = "" } = req.body || {};
+    if (!["PERSONAL_ASSISTANT", "CUSTOMER_PREPARATION", "SELLER_PREPARATION"].includes(purpose)) {
+      throw new AppError(422, "VALIDATION_ERROR", "Unsupported private agent purpose");
+    }
+    if (purpose === "PERSONAL_ASSISTANT" && (req.auth!.workspaceType !== "CUSTOMER" || caseId)) {
+      throw new AppError(403, "FORBIDDEN", "Personal assistant runs require a Customer workspace and cannot include a case");
+    }
+    if (["CUSTOMER_PREPARATION", "SELLER_PREPARATION"].includes(purpose)) {
+      if (typeof caseId !== "string") throw new AppError(422, "VALIDATION_ERROR", "Preparation runs require an authorized case");
+      const c = await prisma.disputeCase.findUnique({ where: { id: caseId } });
+      const ownsCase = purpose === "CUSTOMER_PREPARATION"
+        ? req.auth!.workspaceType === "CUSTOMER" && c?.customerId === req.auth!.userId
+        : req.auth!.workspaceType === "SELLER" && c?.merchantId === req.auth!.merchantId;
+      if (!c || !ownsCase) throw new AppError(404, "NOT_FOUND", "Case not found in the active workspace scope");
+    }
+    if (typeof prompt !== "string" || prompt.trim().length < 3 || prompt.length > 2000) {
+      throw new AppError(422, "VALIDATION_ERROR", "Prompt must be between 3 and 2000 characters");
+    }
     const traceId = generateTraceId("tr_run");
 
     const run = await prisma.agentRun.create({
@@ -502,6 +545,16 @@ commerceRouter.get("/agent/runs/:id", requireSession, async (req, res) => {
     const run = await prisma.agentRun.findUnique({ where: { id: req.params.id } });
     if (!run || run.actorId !== req.auth!.userId) {
       throw new AppError(404, "NOT_FOUND", "Agent run not found");
+    }
+    if (run.purpose === "PERSONAL_ASSISTANT" && req.auth!.workspaceType !== "CUSTOMER") {
+      throw new AppError(404, "NOT_FOUND", "Agent run not found in active workspace scope");
+    }
+    if (run.caseId) {
+      const c = await prisma.disputeCase.findUnique({ where: { id: run.caseId }, select: { customerId: true, merchantId: true } });
+      const authorized = run.purpose === "CUSTOMER_PREPARATION"
+        ? req.auth!.workspaceType === "CUSTOMER" && c?.customerId === req.auth!.userId
+        : run.purpose === "SELLER_PREPARATION" && req.auth!.workspaceType === "SELLER" && c?.merchantId === req.auth!.merchantId;
+      if (!authorized) throw new AppError(404, "NOT_FOUND", "Agent run not found in active workspace scope");
     }
     return sendSuccess(res, {
       runId: run.id,

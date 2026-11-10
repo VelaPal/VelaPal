@@ -383,6 +383,13 @@ export interface CatalogProduct {
   id: string;
   name: string;
   merchantId: string;
-  variants: { id: string; amountMinor: number }[];
+  merchantName?: string;
+  sku?: string;
+  type?: "PHYSICAL" | "DIGITAL" | "SUBSCRIPTION";
+  amountMinor?: number;
+  variants: { id: string; label?: string; sku?: string; amountMinor: number }[];
   currency: "USD";
+  status?: "PUBLISHED" | "ARCHIVED";
+  subscriptionAvailable?: boolean;
+  catalogVersion?: number;
 }

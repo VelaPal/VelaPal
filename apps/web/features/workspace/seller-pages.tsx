@@ -36,6 +36,11 @@ import {
   UnavailablePreview,
   PartySecurity,
 } from "./shared";
+import {
+  ApiSellerProducts,
+  ApiSellerAssistant,
+  ApiSellerSettings,
+} from "./seller-api-pages";
 function useMerchantTransactions() {
   const { session } = useSession();
   return useSWR(
@@ -62,6 +67,7 @@ export function SellerProducts() {
   );
   if (role !== "SELLER")
     return <p role="alert">A Seller workspace is required.</p>;
+  if (!enabled) return <ApiSellerProducts />;
   return (
     <div className="vp-feature-page">
       <WorkspaceHeading
@@ -671,6 +677,7 @@ export function SellerAssistant() {
   const [draft, setDraft] = useState("");
   if (role !== "SELLER")
     return <p role="alert">A Seller workspace is required.</p>;
+  if (!enabled) return <ApiSellerAssistant />;
   return (
     <div className="vp-feature-page">
       <WorkspaceHeading
@@ -764,6 +771,7 @@ export function SellerSettings() {
   const action = useAction();
   if (role !== "SELLER")
     return <p role="alert">A Seller workspace is required.</p>;
+  if (!enabled) return <ApiSellerSettings />;
   return (
     <div className="vp-feature-page">
       <WorkspaceHeading

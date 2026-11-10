@@ -7,6 +7,7 @@ import { commerceRouter } from "./routes/commerce.routes";
 import { disputesRouter } from "./routes/disputes.routes";
 import { adminRouter } from "./routes/admin.routes";
 import { internalRouter } from "./routes/internal.routes";
+import { workspaceRouter } from "./routes/workspace.routes";
 import { startDurableOutboxWorker } from "./integrations/outbox.worker";
 
 const app = express();
@@ -40,6 +41,7 @@ app.get("/health", (_req, res) => {
 // Public Browser API (/api/v1)
 app.use("/api/v1", authRouter);
 app.use("/api/v1", commerceRouter);
+app.use("/api/v1", workspaceRouter);
 app.use("/api/v1", disputesRouter);
 app.use("/api/v1", adminRouter);
 

@@ -142,8 +142,8 @@ model Membership {
   id          String    @id @default(cuid())
   userId      String
   workspaceId String
-  role        String    // CUSTOMER | SELLER_OWNER | SUPERVISOR
-  permissions Json      // e.g. ["disputes.read", "disputes.investigate", "disputes.intervene", "audit.read"]
+  role        String // CUSTOMER | SELLER_OWNER | SUPERVISOR
+  permissions Json // e.g. ["disputes.read", "disputes.investigate", "disputes.intervene", "audit.read"]
   status      String    @default("ACTIVE")
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -164,15 +164,15 @@ model Session {
 }
 
 model MfaChallenge {
-  id         String    @id @default(cuid())
-  userId     String
-  purpose    String    // SESSION_LOGIN | ADMIN_INTERVENTION | ADMIN_APPROVAL | WORKSPACE_SWITCH | MERCHANT_EXECUTION
-  targetId   String?
-  codeHash   String
-  expiresAt  DateTime
-  usedAt     DateTime?
-  stepUpId   String?   @unique
-  createdAt  DateTime  @default(now())
+  id        String    @id @default(cuid())
+  userId    String
+  purpose   String // SESSION_LOGIN | ADMIN_INTERVENTION | ADMIN_APPROVAL | WORKSPACE_SWITCH | MERCHANT_EXECUTION
+  targetId  String?
+  codeHash  String
+  expiresAt DateTime
+  usedAt    DateTime?
+  stepUpId  String?   @unique
+  createdAt DateTime  @default(now())
 }
 
 model IdempotencyRecord {
@@ -190,17 +190,97 @@ model IdempotencyRecord {
 }
 
 model Product {
-  id             String   @id @default(cuid())
-  merchantId     String
-  merchantName   String
-  sku            String   @unique
-  name           String
-  type           String   // PHYSICAL | DIGITAL | SUBSCRIPTION
-  priceMinor     Int
-  currency       String   @default("USD")
-  variants       Json     // [{ variantId, sku, label, priceMinor }]
-  catalogVersion Int      @default(1)
-  createdAt      DateTime @default(now())
+  id               String   @id @default(cuid())
+  merchantId       String
+  merchantName     String
+  sku              String   @unique
+  name             String
+  type             String // PHYSICAL | DIGITAL | SUBSCRIPTION
+  priceMinor       Int
+  currency         String   @default("USD")
+  variants         Json // [{ variantId, sku, label, priceMinor }]
+  status           String   @default("PUBLISHED")
+  paypalProductId  String?
+  paypalPlanId     String?
+  digitalObjectKey String?
+  catalogVersion   Int      @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @default(now()) @updatedAt
+}
+
+model WorkspacePreference {
+  id                  String    @id @default(cuid())
+  userId              String    @unique
+  defaultLimitMinor   Int       @default(7500)
+  remindersEnabled    Boolean   @default(true)
+  notificationsReadAt DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
+model MerchantApplication {
+  id         String    @id @default(cuid())
+  userId     String
+  name       String
+  website    String
+  category   String
+  country    String
+  status     String    @default("PENDING")
+  reviewNote String    @default("Application received and awaiting review.")
+  reviewedBy String?
+  reviewedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+model SellerProfile {
+  id                        String   @id @default(cuid())
+  workspaceId               String   @unique
+  displayName               String
+  website                   String?
+  paypalMerchantId          String?
+  paypalTrackingId          String?
+  paypalStatus              String   @default("NOT_CONNECTED")
+  paypalSubscriptionEnabled Boolean  @default(false)
+  paypalCapabilities        Json     @default("[]")
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+}
+
+model Subscription {
+  id                     String    @id @default(cuid())
+  paypalSubscriptionId   String    @unique
+  paypalPlanId           String
+  customerId             String
+  merchantId             String
+  paypalSellerMerchantId String
+  productId              String
+  productName            String
+  amountMinor            Int
+  currency               String    @default("USD")
+  status                 String    @default("APPROVAL_PENDING")
+  nextBillingTime        DateTime?
+  statusUpdatedAt        DateTime  @default(now())
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  @@index([customerId, status])
+  @@index([merchantId, status])
+}
+
+model LibraryAsset {
+  id        String   @id @default(cuid())
+  productId String   @unique
+  objectKey String
+  fileName  String
+  mime      String
+  byteCount Int
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Quote {
@@ -214,7 +294,7 @@ model Quote {
   amountMinor        Int
   currency           String   @default("USD")
   spendingLimitMinor Int
-  ruleResult         String   // READY | OVER_LIMIT
+  ruleResult         String // READY | OVER_LIMIT
   quoteVersion       Int      @default(1)
   expiresAt          DateTime
   createdAt          DateTime @default(now())
@@ -237,21 +317,21 @@ model PurchaseSnapshot {
 }
 
 model Transaction {
-  id                        String        @id @default(cuid())
-  orderId                   String        @unique
-  customerId                String
-  merchantId                String
-  merchantName              String
-  snapshotId                String
-  paypalOrderId             String?       @unique
-  paypalCaptureId           String?       @unique
-  amountMinor               Int
-  refundableRemainingMinor  Int
-  currency                  String        @default("USD")
-  paymentStatus             PaymentStatus @default(APPROVAL_PENDING)
-  verifiedAt                DateTime?
-  createdAt                 DateTime      @default(now())
-  updatedAt                 DateTime      @updatedAt
+  id                       String        @id @default(cuid())
+  orderId                  String        @unique
+  customerId               String
+  merchantId               String
+  merchantName             String
+  snapshotId               String
+  paypalOrderId            String?       @unique
+  paypalCaptureId          String?       @unique
+  amountMinor              Int
+  refundableRemainingMinor Int
+  currency                 String        @default("USD")
+  paymentStatus            PaymentStatus @default(APPROVAL_PENDING)
+  verifiedAt               DateTime?
+  createdAt                DateTime      @default(now())
+  updatedAt                DateTime      @updatedAt
 }
 
 model DisputeCase {
@@ -307,29 +387,29 @@ model CaseMessage {
   authorParty PartyType
   audience    AudienceType @default(PRIVATE)
   text        String
-  sourceRefs  Json         // [{ sourceId, version, locator }]
+  sourceRefs  Json // [{ sourceId, version, locator }]
   version     Int          @default(1)
   createdAt   DateTime     @default(now())
 }
 
 model AgentRun {
-  id                     String       @id @default(cuid())
-  actorId                String
-  caseId                 String?
-  purpose                AiPurpose
-  audience               AudienceType @default(CASE_SHARED)
-  inputVersion           Int          @default(1)
-  accessRevision         Int          @default(1)
-  status                 AiRunStatus  @default(QUEUED)
-  prompt                 String?
-  manifestId             String?
-  replayId               String?      @unique
-  manifestHash           String?
-  hmacSignature          String?
-  manifestExpiresAt      DateTime?
-  resultPayload          Json?
-  createdAt              DateTime     @default(now())
-  updatedAt              DateTime     @updatedAt
+  id                String       @id @default(cuid())
+  actorId           String
+  caseId            String?
+  purpose           AiPurpose
+  audience          AudienceType @default(CASE_SHARED)
+  inputVersion      Int          @default(1)
+  accessRevision    Int          @default(1)
+  status            AiRunStatus  @default(QUEUED)
+  prompt            String?
+  manifestId        String?
+  replayId          String?      @unique
+  manifestHash      String?
+  hmacSignature     String?
+  manifestExpiresAt DateTime?
+  resultPayload     Json?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 }
 
 model Proposal {
@@ -371,7 +451,7 @@ model PartyConsent {
   actorId         String
   party           PartyType
   intent          ConsentIntent
-  decision        String        // APPROVED | REJECTED
+  decision        String // APPROVED | REJECTED
   paramsHash      String
   caseVersion     Int
   proposalVersion Int?
@@ -381,15 +461,15 @@ model PartyConsent {
 }
 
 model ReviewRequest {
-  id                  String   @id @default(cuid())
+  id                  String    @id @default(cuid())
   caseId              String
   requesterId         String
   requesterParty      PartyType
   reason              String
   contestedFindingIds Json
   newSourceRefs       Json
-  status              String   @default("QUEUED_FOR_REVIEW")
-  createdAt           DateTime @default(now())
+  status              String    @default("QUEUED_FOR_REVIEW")
+  createdAt           DateTime  @default(now())
 }
 
 model CaseAssignment {
@@ -402,21 +482,21 @@ model CaseAssignment {
 }
 
 model ApprovalRequest {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   caseId          String
   actionRequestId String?
-  scope           String   // ALLOW_VOLUNTARY_MEDIATION | ALLOW_VOLUNTARY_SETTLEMENT_PROPOSAL
+  scope           String // ALLOW_VOLUNTARY_MEDIATION | ALLOW_VOLUNTARY_SETTLEMENT_PROPOSAL
   amountMinor     Int?
-  currency        String   @default("USD")
+  currency        String    @default("USD")
   paramsHash      String
   caseVersion     Int
-  proposalVersion Int      @default(1)
-  status          String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  proposalVersion Int       @default(1)
+  status          String    @default("PENDING") // PENDING | APPROVED | REJECTED
   decisionId      String?
   reviewerId      String?
   reason          String?
   expiresAt       DateTime?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime  @default(now())
 }
 
 model ProviderOperation {
@@ -443,7 +523,7 @@ model ProviderOperation {
 
 model OutboxJob {
   id            String    @id @default(cuid())
-  jobType       String    // SCAN_AND_INDEX_SOURCE | REVOKE_SOURCE | RUN_AI_ASSESSMENT | RESUME_AI_ASSESSMENT
+  jobType       String // SCAN_AND_INDEX_SOURCE | REVOKE_SOURCE | RUN_AI_ASSESSMENT | RESUME_AI_ASSESSMENT
   payload       Json
   state         String    @default("PENDING") // PENDING | LEASED | COMPLETED | FAILED
   leaseUntil    DateTime?
@@ -455,12 +535,12 @@ model OutboxJob {
 }
 
 model WebhookInbox {
-  id          String   @id // PayPal event ID
+  id          String    @id // PayPal event ID
   eventType   String
   payload     Json
-  processed   Boolean  @default(false)
+  processed   Boolean   @default(false)
   processedAt DateTime?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
 }
 
 model AuditEvent {

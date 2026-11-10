@@ -1,4 +1,3 @@
-version: "3.9"
 services:
   postgres:
     image: postgres:16-alpine
@@ -30,11 +29,25 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadminpassword
+      MINIO_API_CORS_ALLOW_ORIGIN: "http://localhost:3000,http://127.0.0.1:3000"
     ports:
       - "9002:9000"     
       - "9003:9001"     
     volumes:
       - miniodata:/data
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: velapal-minio-init
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadminpassword
+    volumes:
+      - ./docker/minio/configure.sh:/configure.sh:ro
+    entrypoint: ["/bin/sh", "/configure.sh"]
+    restart: "no"
 
 volumes:
   pgdata:

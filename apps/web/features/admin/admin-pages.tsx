@@ -26,6 +26,7 @@ import {
   type PreviewMerchant,
 } from "./admin-preview";
 import { useAdminPreview } from "./use-admin-preview";
+import { ApiAdminMerchants } from "./admin-merchants-api";
 import {
   AdminHeading,
   AdminNotice,
@@ -166,6 +167,7 @@ export function AdminMerchants() {
   const [status, setStatus] = useState("All");
   const [selected, setSelected] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  if (process.env.NEXT_PUBLIC_API_MODE === "api") return <ApiAdminMerchants />;
   const merchant = state.merchants.find((m) => m.id === selected);
   const rows = state.merchants.filter(
     (m) =>

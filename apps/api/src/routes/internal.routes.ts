@@ -165,19 +165,19 @@ internalRouter.get("/case-runs/:id/context", async (req, res) => {
     if (!run) throw new AppError(404, "NOT_FOUND", "AgentRun not found");
 
     if (run.purpose === "PERSONAL_ASSISTANT" || !run.caseId) {
-      const catalogItems = await prisma.product.findMany();
-      const recentTransactions = await prisma.transaction.findMany({
+      if (run.purpose !== "PERSONAL_ASSISTANT") throw new AppError(403, "FORBIDDEN", "Case preparation run has no case binding");
+      const [catalogItems, recentTransactions, preferences] = await Promise.all([prisma.product.findMany({ where: { status: "PUBLISHED" }, take: 100 }), prisma.transaction.findMany({
         where: { customerId: run.actorId },
         take: 10,
         orderBy: { createdAt: "desc" },
-      });
+      }), prisma.workspacePreference.findUnique({ where: { userId: run.actorId } })]);
       return res.status(200).json({
         runId: run.id,
         purpose: "PERSONAL_ASSISTANT",
         audience: "PRIVATE",
         personalContext: {
           catalogItems,
-          spendingLimitMinor: 10000,
+          spendingLimitMinor: preferences?.defaultLimitMinor ?? 7500,
           recentTransactions,
         },
       });

@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Readable } from "stream";
 
@@ -42,5 +42,24 @@ export const StorageAdapter = {
       // Fallback synthetic buffer in local dev when MinIO is not running
       return Buffer.from(`VELAPAL-SYNTHETIC-EVIDENCE:${objectKey}`);
     }
+  },
+
+  async createProductUploadUrl(objectKey: string, mime: string, expiresInSeconds = 600) {
+    const command = new PutObjectCommand({ Bucket: BUCKET, Key: objectKey, ContentType: mime });
+    return getSignedUrl(s3, command, { expiresIn: expiresInSeconds });
+  },
+
+  async createProductDownloadUrl(objectKey: string, fileName: string, expiresInSeconds = 300) {
+    const command = new GetObjectCommand({
+      Bucket: BUCKET,
+      Key: objectKey,
+      ResponseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    });
+    return getSignedUrl(s3, command, { expiresIn: expiresInSeconds });
+  },
+
+  async inspectObject(objectKey: string) {
+    const result = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: objectKey }));
+    return { byteCount: result.ContentLength ?? 0, mime: result.ContentType ?? "application/octet-stream" };
   },
 };

@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { transactionsService } from "@/services/contracts/transactions.service";
 import { useSession } from "@/features/auth/session";
@@ -9,6 +9,7 @@ import CheckoutPreview from "./checkout-preview";
 import { useWorkspacePreview } from "@/features/workspace/use-workspace-preview";
 import { moneyFromDollars } from "@/features/workspace/preview-state";
 import { AdminSearch } from "@/features/admin/admin-ui";
+import { workspaceService } from "@/services/contracts/workspace.service";
 type Quote = Awaited<ReturnType<typeof transactionsService.quote>>;
 export default function Catalog() {
   const { session } = useSession();
@@ -29,6 +30,15 @@ export default function Catalog() {
       : null,
     () => transactionsService.catalog(),
   );
+  const preferences = useSWR(
+    session?.activeWorkspace.type === "CUSTOMER" && !preview.enabled
+      ? [session.activeWorkspace.id, "workspace-preferences"]
+      : null,
+    workspaceService.preferences,
+  );
+  useEffect(() => {
+    if (preferences.data) setLimit((preferences.data.defaultLimitMinor / 100).toFixed(2));
+  }, [preferences.data]);
   if (session?.activeWorkspace.type !== "CUSTOMER")
     return (
       <p role="alert">Catalog checkout is available in Customer workspaces.</p>

@@ -27,6 +27,13 @@ import {
   UnavailablePreview,
   PartySecurity,
 } from "./shared";
+import {
+  ApiSubscriptions,
+  ApiDigitalLibrary,
+  ApiNotifications,
+  ApiCustomerSettings,
+  ApiMerchantApplication,
+} from "./customer-api-pages";
 export function Subscriptions() {
   const { state, enabled, role, commit } = useWorkspacePreview();
   const [history, setHistory] = useState(true);
@@ -36,8 +43,9 @@ export function Subscriptions() {
   const action = useAction();
   const sub = state.subscription;
   const seller = role === "SELLER";
-  if (role === "ADMIN")
+  if (role !== "CUSTOMER" && role !== "SELLER")
     return <p role="alert">Choose a personal or Seller workspace.</p>;
+  if (!enabled) return <ApiSubscriptions seller={seller} />;
   return (
     <div className="vp-feature-page">
       <WorkspaceHeading
@@ -329,6 +337,7 @@ export function DigitalLibrary() {
   const [dialog, setDialog] = useState<"guide" | "agreement" | null>(null);
   if (role !== "CUSTOMER")
     return <p role="alert">A personal workspace is required.</p>;
+  if (!enabled) return <ApiDigitalLibrary />;
   return (
     <div className="vp-feature-page">
       <WorkspaceHeading
@@ -502,8 +511,9 @@ export function DigitalLibrary() {
 export function Notifications() {
   const { enabled, state, role, commit } = useWorkspacePreview();
   const action = useAction();
-  if (role === "ADMIN")
+  if (role !== "CUSTOMER" && role !== "SELLER")
     return <p role="alert">Choose a personal or Seller workspace.</p>;
+  if (!enabled) return <ApiNotifications role={role} />;
   return (
     <div className="vp-feature-page">
       <WorkspaceHeading
@@ -586,6 +596,7 @@ export function CustomerSettings() {
   const action = useAction();
   if (role !== "CUSTOMER")
     return <p role="alert">A personal workspace is required.</p>;
+  if (!enabled) return <ApiCustomerSettings />;
   return (
     <div className="vp-feature-page">
       <WorkspaceHeading
@@ -731,10 +742,11 @@ export function MerchantApplication() {
   const [country, setCountry] = useState(state.business.country);
   const [reviewed, setReviewed] = useState(false);
   const action = useAction();
-  if (role === "ADMIN")
+  if (role !== "CUSTOMER" && role !== "SELLER")
     return (
       <p role="alert">Use Merchant verification in the Admin workspace.</p>
     );
+  if (!enabled) return <ApiMerchantApplication />;
   return (
     <div className="vp-feature-page">
       <WorkspaceHeading

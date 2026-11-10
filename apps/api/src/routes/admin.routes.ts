@@ -8,6 +8,37 @@ import { PayPalAdapter } from "../integrations/paypal.adapter";
 
 export const adminRouter = Router();
 
+adminRouter.get("/admin/merchant-applications", requireSession, async (req, res) => {
+  try {
+    requireAdminWorkspace(req);
+    const items = await prisma.merchantApplication.findMany({ orderBy: { createdAt: "desc" }, take: 200 });
+    const owners = await prisma.user.findMany({ where: { id: { in: [...new Set(items.map((item) => item.userId))] } }, select: { id: true, name: true, emailCanonical: true } });
+    const ownerById = new Map(owners.map((owner) => [owner.id, owner]));
+    return sendSuccess(res, { items: items.map((item) => ({ ...item, owner: ownerById.get(item.userId) || null })) });
+  } catch (err) { return sendError(res, err); }
+});
+
+adminRouter.post("/admin/merchant-applications/:id/review", requireSession, async (req, res) => {
+  try {
+    requireAdminWorkspace(req);
+    const app = await prisma.merchantApplication.findUnique({ where: { id: req.params.id } });
+    if (!app) throw new AppError(404, "NOT_FOUND", "Merchant application not found");
+    if (app.status !== "PENDING") throw new AppError(409, "APPLICATION_ALREADY_REVIEWED", "Only pending applications can be reviewed");
+    const { decision, reason, stepUpId } = req.body || {};
+    if (!["APPROVED", "REJECTED"].includes(decision) || typeof reason !== "string" || reason.trim().length < 10) throw new AppError(422, "VALIDATION_ERROR", "Choose APPROVED or REJECTED and provide a review reason");
+    await verifyStepUpToken(req.auth!.userId, stepUpId, "ADMIN_APPROVAL", app.id);
+    const result = await prisma.$transaction(async (tx) => {
+      const reviewed = await tx.merchantApplication.update({ where: { id: app.id }, data: { status: decision, reviewNote: reason.trim(), reviewedBy: req.auth!.userId, reviewedAt: new Date() } });
+      if (decision !== "APPROVED") return { application: reviewed, workspace: null };
+      const merchantId = `merch_${app.id}`;
+      const workspace = await tx.workspace.create({ data: { type: "SELLER", name: app.name, merchantId, memberships: { create: { userId: app.userId, role: "SELLER_OWNER", permissions: ["commerce.read", "commerce.manage", "disputes.read", "disputes.respond"] } } } });
+      await tx.sellerProfile.create({ data: { workspaceId: workspace.id, displayName: app.name, website: app.website } });
+      return { application: reviewed, workspace: { id: workspace.id, name: workspace.name, merchantId } };
+    });
+    return sendSuccess(res, result, 1);
+  } catch (err) { return sendError(res, err); }
+});
+
 function requireAdminWorkspace(req: any) {
   if (req.auth?.workspaceType !== "ADMIN") {
     throw new AppError(403, "FORBIDDEN", "Endpoint requires an active ADMIN workspace session");
@@ -553,17 +584,44 @@ adminRouter.post("/webhooks/paypal", async (req, res) => {
     }
 
     const eventId = String(eventBody.id || `WH-${Date.now()}`);
-    await prisma.webhookInbox.upsert({
+    const eventType = String(eventBody.event_type || "UNKNOWN");
+    const inbox = await prisma.webhookInbox.upsert({
       where: { id: eventId },
-      update: { processed: true, processedAt: new Date() },
-      create: {
-        id: eventId,
-        eventType: String(eventBody.event_type || "UNKNOWN"),
-        payload: eventBody,
-        processed: true,
-        processedAt: new Date(),
-      },
+      update: {},
+      create: { id: eventId, eventType, payload: eventBody, processed: false },
     });
+    if (!inbox.processed) {
+      const resource = eventBody.resource || {};
+      if (eventType.startsWith("BILLING.SUBSCRIPTION.")) {
+        const subscriptionId = String(resource.id || resource.billing_agreement_id || "");
+        const item = subscriptionId ? await prisma.subscription.findUnique({ where: { paypalSubscriptionId: subscriptionId } }) : null;
+        if (item) {
+          const eventStatus: Record<string, string> = {
+            "BILLING.SUBSCRIPTION.CREATED": "APPROVAL_PENDING",
+            "BILLING.SUBSCRIPTION.ACTIVATED": "ACTIVE",
+            "BILLING.SUBSCRIPTION.CANCELLED": "CANCELLED",
+            "BILLING.SUBSCRIPTION.SUSPENDED": "SUSPENDED",
+            "BILLING.SUBSCRIPTION.EXPIRED": "EXPIRED",
+          };
+          const status = String(resource.status || eventStatus[eventType] || item.status);
+          await prisma.subscription.update({ where: { id: item.id }, data: { status, statusUpdatedAt: new Date(), nextBillingTime: resource.billing_info?.next_billing_time ? new Date(resource.billing_info.next_billing_time) : item.nextBillingTime } });
+        }
+      } else if (eventType === "MERCHANT.ONBOARDING.COMPLETED") {
+        const trackingId = String(resource.tracking_id || resource.merchant_id || "");
+        const merchantId = String(resource.merchant_id_in_paypal || resource.payer_id || "");
+        const profile = trackingId ? await prisma.sellerProfile.findFirst({ where: { paypalTrackingId: trackingId } }) : null;
+        if (profile && merchantId) {
+          const integration = await PayPalAdapter.getSellerIntegration(merchantId);
+          if (integration.payments_receivable === true && integration.primary_email_confirmed === true) {
+            const grants = (integration.oauth_integrations || []).filter((grant: any) => grant.integration_method === "PAYPAL").flatMap((grant: any) => Array.isArray(grant.oauth_third_party) ? grant.oauth_third_party : [grant.oauth_third_party || {}]);
+            const selectedGrants = grants.filter((grant: any) => grant.partner_client_id === process.env.PAYPAL_CLIENT_ID && Array.isArray(grant.scopes));
+            const paypalSubscriptionEnabled = selectedGrants.some((grant: any) => grant.scopes.some((scope: string) => scope.includes("/services/subscriptions")));
+            await prisma.sellerProfile.update({ where: { id: profile.id }, data: { paypalMerchantId: merchantId, paypalStatus: "ACTIVE", paypalSubscriptionEnabled, paypalCapabilities: integration.oauth_integrations || [] } });
+          }
+        }
+      }
+      await prisma.webhookInbox.update({ where: { id: eventId }, data: { processed: true, processedAt: new Date() } });
+    }
 
     return sendSuccess(res, {
       received: true,
