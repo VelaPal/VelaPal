@@ -86,9 +86,9 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
       </div>
     );
   const bindings =
-    process.env.NEXT_PUBLIC_API_MODE !== "api"
-      ? d.mockConsentBindings
-      : undefined;
+    process.env.NEXT_PUBLIC_API_MODE === "api"
+      ? d.consentBindings
+      : d.mockConsentBindings;
   const refresh = () => result.mutate();
   const assessment = d.latestAssessment;
   const stale =
@@ -445,16 +445,18 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
                     action.busy ||
                     !mediation ||
                     !!stale ||
-                    !bindings ||
+                    !bindings?.mediationParamsHash ||
                     c.control !== "RUNNING"
                   }
                   onClick={() =>
                     void action.run(async () => {
+                      if (!bindings?.mediationParamsHash)
+                        throw new Error("Refresh the case for current mediation bindings");
                       await disputesService.mediationConsent(
                         caseId,
                         c.caseVersion,
                         assessment.runId,
-                        bindings!.mediationParamsHash,
+                        bindings.mediationParamsHash,
                         mediationDecision,
                       );
                       setMediation(false);
@@ -466,10 +468,10 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
                 </button>
               </>
             )}
-            {!bindings && (
+            {!bindings?.mediationParamsHash && assessment && !stale && (
               <p className="mt-3 text-sm text-amber-800">
-                Consent/proposal drafting unavailable until backend supplies
-                authoritative mediation and source-manifest bindings.
+                Mediation consent needs a current assessment and authoritative
+                source-manifest binding from the backend.
               </p>
             )}
           </Panel>
@@ -479,7 +481,7 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
               onSubmit={(e) => {
                 e.preventDefault();
                 void action.run(async () => {
-                  if (!bindings)
+                  if (!bindings?.sourceDigest)
                     throw new Error("Authoritative source digest unavailable");
                   const amountMinor = Number(amount);
                   if (!Number.isSafeInteger(amountMinor) || amountMinor < 0)
@@ -542,7 +544,7 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
                 className="vp-button"
                 disabled={
                   action.busy ||
-                  !bindings ||
+                  !bindings?.sourceDigest ||
                   !c.capabilities?.canProposeTerms ||
                   c.control !== "RUNNING"
                 }

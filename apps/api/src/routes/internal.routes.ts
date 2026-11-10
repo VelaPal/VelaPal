@@ -37,6 +37,127 @@ internalRouter.get("/sources/:sid/bytes", async (req, res) => {
 // Require X-AI-Callback-Token for all Python -> Express context & checkpoint endpoints
 internalRouter.use(requireAiCallbackAuth);
 
+// GET /internal/v1/index-jobs/:id/context (authoritative scope for evidence indexing)
+internalRouter.get("/index-jobs/:id/context", async (req, res) => {
+  try {
+    const job = await prisma.outboxJob.findUnique({ where: { id: req.params.id } });
+    if (!job || job.jobType !== "SCAN_AND_INDEX_SOURCE") {
+      throw new AppError(404, "NOT_FOUND", "Evidence index job not found");
+    }
+    if (job.state !== "LEASED" || !job.leaseUntil || job.leaseUntil <= new Date()) {
+      throw new AppError(409, "INDEX_JOB_NOT_ACTIVE", "Evidence index job is no longer active");
+    }
+    if (!job.payload || typeof job.payload !== "object" || Array.isArray(job.payload)) {
+      throw new AppError(409, "INDEX_JOB_INVALID", "Evidence index job scope is invalid");
+    }
+    const payload = job.payload as unknown as {
+      tenantId?: unknown;
+      caseId?: unknown;
+      sourceId?: unknown;
+      accessRevision?: unknown;
+    };
+    if (
+      typeof payload.tenantId !== "string" ||
+      typeof payload.caseId !== "string" ||
+      typeof payload.sourceId !== "string" ||
+      typeof payload.accessRevision !== "number" ||
+      !Number.isSafeInteger(payload.accessRevision)
+    ) {
+      throw new AppError(409, "INDEX_JOB_INVALID", "Evidence index job scope is invalid");
+    }
+    const [c, source] = await Promise.all([
+      prisma.disputeCase.findUnique({ where: { id: payload.caseId } }),
+      prisma.caseSource.findUnique({ where: { id: payload.sourceId } }),
+    ]);
+    if (
+      !c ||
+      !source ||
+      c.merchantId !== payload.tenantId ||
+      c.accessRevision !== payload.accessRevision ||
+      source.caseId !== c.id ||
+      source.scanState !== "CLEAN" ||
+      source.audience === "REVOKED" ||
+      !source.sha256
+    ) {
+      throw new AppError(409, "SOURCE_ACCESS_CHANGED", "Evidence is no longer authorized for indexing");
+    }
+    return res.status(200).json({
+      jobId: job.id,
+      tenantId: c.merchantId,
+      caseId: c.id,
+      sourceId: source.id,
+      sourceVersion: source.sourceVersion,
+      accessRevision: c.accessRevision,
+      audience: source.audience,
+      mime: source.mime,
+      sha256: source.sha256,
+      byteCount: source.byteCount,
+      ownerId: source.ownerId,
+      ownerParty: source.ownerParty,
+    });
+  } catch (err) {
+    return sendError(res, err);
+  }
+});
+
+// GET /internal/v1/revoke-jobs/:id/context (authoritative scope for index deletion)
+internalRouter.get("/revoke-jobs/:id/context", async (req, res) => {
+  try {
+    const job = await prisma.outboxJob.findUnique({ where: { id: req.params.id } });
+    if (!job || job.jobType !== "REVOKE_SOURCE") {
+      throw new AppError(404, "NOT_FOUND", "Evidence revoke job not found");
+    }
+    if (job.state !== "LEASED" || !job.leaseUntil || job.leaseUntil <= new Date()) {
+      throw new AppError(409, "REVOKE_JOB_NOT_ACTIVE", "Evidence revoke job is no longer active");
+    }
+    if (!job.payload || typeof job.payload !== "object" || Array.isArray(job.payload)) {
+      throw new AppError(409, "REVOKE_JOB_INVALID", "Evidence revoke job scope is invalid");
+    }
+    const payload = job.payload as unknown as {
+      tenantId?: unknown;
+      caseId?: unknown;
+      sourceId?: unknown;
+      revokedUpToVersion?: unknown;
+      accessRevision?: unknown;
+    };
+    if (
+      typeof payload.tenantId !== "string" ||
+      typeof payload.caseId !== "string" ||
+      typeof payload.sourceId !== "string" ||
+      typeof payload.revokedUpToVersion !== "number" ||
+      !Number.isSafeInteger(payload.revokedUpToVersion) ||
+      typeof payload.accessRevision !== "number" ||
+      !Number.isSafeInteger(payload.accessRevision)
+    ) {
+      throw new AppError(409, "REVOKE_JOB_INVALID", "Evidence revoke job scope is invalid");
+    }
+    const [c, source] = await Promise.all([
+      prisma.disputeCase.findUnique({ where: { id: payload.caseId } }),
+      prisma.caseSource.findUnique({ where: { id: payload.sourceId } }),
+    ]);
+    if (
+      !c ||
+      !source ||
+      c.merchantId !== payload.tenantId ||
+      source.caseId !== c.id ||
+      source.audience !== "REVOKED" ||
+      source.sourceVersion < payload.revokedUpToVersion
+    ) {
+      throw new AppError(409, "SOURCE_REVOCATION_CHANGED", "Evidence revocation scope is invalid");
+    }
+    return res.status(200).json({
+      jobId: job.id,
+      tenantId: c.merchantId,
+      caseId: c.id,
+      sourceId: source.id,
+      revokedUpToVersion: payload.revokedUpToVersion,
+      accessRevision: payload.accessRevision,
+    });
+  } catch (err) {
+    return sendError(res, err);
+  }
+});
+
 // GET /internal/v1/case-runs/:id/context
 internalRouter.get("/case-runs/:id/context", async (req, res) => {
   try {

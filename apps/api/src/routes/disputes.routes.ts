@@ -4,7 +4,12 @@ import { prisma } from "../lib/prisma";
 import { requireSession, verifyStepUpToken } from "../middleware/auth";
 import { checkIdempotency, saveIdempotency } from "../middleware/idempotency";
 import { AppError, requireIfMatch, sendError, sendSuccess } from "../utils/envelope";
-import { canonicalHash, generateTraceId } from "../utils/crypto";
+import {
+  canonicalHash,
+  generateTraceId,
+  mediationConsentParamsHash,
+  sourceManifestDigest,
+} from "../utils/crypto";
 import { StorageAdapter } from "../integrations/storage.adapter";
 
 export const disputesRouter = Router();
@@ -221,6 +226,33 @@ disputesRouter.get("/disputes/:id", requireSession, async (req, res) => {
       },
       orderBy: { createdAt: "desc" },
     });
+    const sourceDigest = sourceManifestDigest(
+      c.id,
+      c.caseVersion,
+      c.accessRevision,
+      sources,
+    );
+    const currentAssessmentRun =
+      latestRun &&
+      ["NEEDS_INFO", "COMPLETED", "ABSTAINED"].includes(latestRun.status) &&
+      latestRun.inputVersion === c.caseVersion &&
+      latestRun.accessRevision === c.accessRevision
+        ? latestRun
+        : null;
+    const consentBindings = {
+      sourceDigest,
+      ...(currentAssessmentRun
+        ? {
+            mediationParamsHash: mediationConsentParamsHash({
+              caseId: c.id,
+              caseVersion: c.caseVersion,
+              accessRevision: c.accessRevision,
+              sourceDigest,
+              assessmentRunId: currentAssessmentRun.id,
+            }),
+          }
+        : {}),
+    };
 
     const activeProposal = await prisma.proposal.findFirst({
       where: { caseId: c.id, status: "AWAITING_CONSENT" },
@@ -353,6 +385,7 @@ disputesRouter.get("/disputes/:id", requireSession, async (req, res) => {
           createdAt: m.createdAt.toISOString(),
         })),
         latestAssessment: latestRun?.resultPayload || null,
+        consentBindings,
         activeProposal: activeProposal
           ? {
               proposalId: activeProposal.id,
@@ -914,9 +947,60 @@ disputesRouter.post("/disputes/:id/mediation-consents", requireSession, async (r
 
     requireIfMatch(req.headers["if-match"] as string | undefined, c.caseVersion);
 
-    const { consentIntent = "CONTINUE_MEDIATION", paramsHash, decision = "APPROVED" } = req.body || {};
+    const {
+      consentIntent = "CONTINUE_MEDIATION",
+      assessmentRunId,
+      paramsHash,
+      decision = "APPROVED",
+    } = req.body || {};
     if (consentIntent !== "CONTINUE_MEDIATION") {
       throw new AppError(422, "VALIDATION_ERROR", "consentIntent must be CONTINUE_MEDIATION");
+    }
+    if (c.control !== "RUNNING") {
+      throw new AppError(409, "CASE_PAUSED", "Mediation consent is unavailable while case control is not RUNNING", false, c.caseVersion);
+    }
+    if (decision !== "APPROVED" && decision !== "REJECTED") {
+      throw new AppError(422, "VALIDATION_ERROR", "decision must be APPROVED or REJECTED");
+    }
+    const latestRun = await prisma.agentRun.findFirst({
+      where: {
+        caseId: c.id,
+        purpose: "SHARED_ASSESSMENT",
+        status: { in: ["NEEDS_INFO", "COMPLETED", "ABSTAINED"] },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    if (
+      typeof assessmentRunId !== "string" ||
+      !latestRun ||
+      latestRun.id !== assessmentRunId ||
+      latestRun.inputVersion !== c.caseVersion ||
+      latestRun.accessRevision !== c.accessRevision
+    ) {
+      throw new AppError(409, "STALE_ASSESSMENT", "Use the latest assessment for the current case and evidence version", false, c.caseVersion);
+    }
+    const sharedSources = await prisma.caseSource.findMany({
+      where: {
+        caseId: c.id,
+        scanState: "CLEAN",
+        audience: { in: ["CASE_SHARED", "PROVIDER_SHARED"] },
+      },
+    });
+    const sourceDigest = sourceManifestDigest(
+      c.id,
+      c.caseVersion,
+      c.accessRevision,
+      sharedSources,
+    );
+    const expectedParamsHash = mediationConsentParamsHash({
+      caseId: c.id,
+      caseVersion: c.caseVersion,
+      accessRevision: c.accessRevision,
+      sourceDigest,
+      assessmentRunId: latestRun.id,
+    });
+    if (paramsHash !== expectedParamsHash) {
+      throw new AppError(409, "STALE_MEDIATION_BINDING", "Refresh the case before recording mediation consent", false, c.caseVersion);
     }
 
     const consent = await prisma.partyConsent.create({
@@ -925,8 +1009,8 @@ disputesRouter.post("/disputes/:id/mediation-consents", requireSession, async (r
         actorId: req.auth!.userId,
         party: actorParty,
         intent: "CONTINUE_MEDIATION",
-        decision: decision === "REJECTED" ? "REJECTED" : "APPROVED",
-        paramsHash: String(paramsHash || `sha256_med_continue_v${c.caseVersion}`),
+        decision,
+        paramsHash: expectedParamsHash,
         caseVersion: c.caseVersion,
         expiresAt: new Date(Date.now() + 24 * 3600 * 1000),
       },
@@ -966,6 +1050,26 @@ disputesRouter.post("/disputes/:id/proposals", requireSession, async (req, res) 
     const amountMinor = Number(money?.amountMinor || 0);
     const currency = String(money?.currency || "USD");
 
+    if (typeof sourceDigest !== "string") {
+      throw new AppError(422, "SOURCE_MANIFEST_REQUIRED", "Refresh the case to get the current source manifest binding");
+    }
+    const sharedSources = await prisma.caseSource.findMany({
+      where: {
+        caseId: c.id,
+        scanState: "CLEAN",
+        audience: { in: ["CASE_SHARED", "PROVIDER_SHARED"] },
+      },
+    });
+    const authoritativeSourceDigest = sourceManifestDigest(
+      c.id,
+      c.caseVersion,
+      c.accessRevision,
+      sharedSources,
+    );
+    if (sourceDigest !== authoritativeSourceDigest) {
+      throw new AppError(409, "STALE_SOURCE_MANIFEST", "Shared evidence changed; refresh the case before drafting a proposal", false, c.caseVersion);
+    }
+
     const tx = await prisma.transaction.findFirst({
       where: { OR: [{ id: c.transactionId || "" }, { orderId: c.orderId }] },
     });
@@ -986,7 +1090,7 @@ disputesRouter.post("/disputes/:id/proposals", requireSession, async (req, res) 
       amountMinor,
       currency,
       route,
-      sourceDigest,
+      sourceDigest: authoritativeSourceDigest,
     });
 
     const expiresAt = new Date(Date.now() + Number(expiresInMinutes) * 60 * 1000);
@@ -1011,7 +1115,7 @@ disputesRouter.post("/disputes/:id/proposals", requireSession, async (req, res) 
           amountMinor,
           currency,
           route: route as any,
-          sourceDigest: String(sourceDigest || `sha256_manifest_v${c.caseVersion}`),
+          sourceDigest: authoritativeSourceDigest,
           paramsHash,
           status: "AWAITING_CONSENT",
           expiresAt,

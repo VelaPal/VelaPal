@@ -274,6 +274,7 @@ export interface DisputeDetail {
   messages: CaseMessage[];
   latestAssessment: LatestAssessment | null;
   activeProposal: Proposal | null;
+  consentBindings?: ConsentBindings;
   pendingConsents: PendingConsent[];
   activityTimeline: TimelineEvent[];
 }
@@ -336,12 +337,13 @@ export interface Items<T> {
   nextCursor?: string | null;
 }
 
-/** Optional mock-only metadata. Not part of the frozen backend DTO.
- * In live mode these actions remain unavailable until BE supplies authoritative bindings.
- */
-export interface MockConsentBindings {
-  modelMode: "fixture";
+export interface ConsentBindings {
   sourceDigest: string;
+  mediationParamsHash?: string;
+}
+/** Optional mock-only metadata for the embedded API. */
+export interface MockConsentBindings extends ConsentBindings {
+  modelMode: "fixture";
   mediationParamsHash: string;
 }
 export type BoundDisputeDetail = DisputeDetail & {
