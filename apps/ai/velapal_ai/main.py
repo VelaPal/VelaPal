@@ -45,10 +45,17 @@ async def lifespan(app):
 app = FastAPI(title="VelaPal Ibnu AI", version="6.1.2", lifespan=lifespan)
 @app.exception_handler(ServiceError)
 async def service_error(_req, error):
+    print(f"[AI ServiceError] code={error.code} status={error.status} message={error.message}")
     return JSONResponse(status_code=error.status, content={"error": {"code": error.code, "message": error.message, "retryable": error.retryable}})
 @app.exception_handler(TimeoutError)
-async def timeout_error(_req, _error):
+async def timeout_error(_req, error):
+    print(f"[AI TimeoutError] {error}")
     return JSONResponse(status_code=503, content={"error": {"code": "AI_TIMEOUT", "message": "AI work exceeded the bounded request budget.", "retryable": True}})
+@app.exception_handler(Exception)
+async def unhandled_error(_req, error):
+    import traceback
+    traceback.print_exc()
+    return JSONResponse(status_code=500, content={"error": {"code": "INTERNAL_ERROR", "message": str(error), "retryable": False}})
 @app.exception_handler(RequestValidationError)
 async def validation_error(_req, _error):
     return JSONResponse(status_code=422, content={"error": {"code": "VALIDATION_ERROR", "message": "Request does not match contract 6.1.2.", "retryable": False}})

@@ -5,6 +5,8 @@ import RequestState from "@/components/ui/request-state";
 import { formatDate, formatMoney } from "@/lib/format";
 import { useTransaction } from "@/features/transactions/hooks/use-transactions";
 import TransactionStatusBadge from "@/features/transactions/components/transactions-status";
+import { transactionsService } from "@/services/contracts/transactions.service";
+import { useAction } from "@/components/ui/workflow";
 
 type TransactionDetailProps = {
   transactionId: string;
@@ -13,6 +15,7 @@ type TransactionDetailProps = {
 export default function TransactionDetail({
   transactionId,
 }: TransactionDetailProps) {
+  const action = useAction();
   const { transaction, error, isLoading, isRefreshing, refresh } =
     useTransaction(transactionId);
 
@@ -133,10 +136,43 @@ export default function TransactionDetail({
                 <TransactionStatusBadge status={transaction.status} />
               </div>
 
-              {transaction.status === "UNKNOWN" && (
-                <p className="mt-4 text-sm leading-6 text-slate-600">
-                  The payment outcome is still unconfirmed.
-                </p>
+              {["APPROVAL_PENDING", "UNKNOWN", "UNCONFIRMED"].includes(transaction.status) && (
+                <div className="mt-4 space-y-3 border-t border-slate-200 pt-4">
+                  {transaction.status === "APPROVAL_PENDING" ? (
+                    <p className="text-xs leading-5 text-slate-600">
+                      Buyer authorization pending. Click below to capture funds and confirm payment.
+                    </p>
+                  ) : (
+                    <p className="text-xs leading-5 text-slate-600">
+                      The payment outcome is still unconfirmed. If you have not approved this on PayPal Sandbox yet, open the approval link below, then capture.
+                    </p>
+                  )}
+                  {transaction.providerReferences?.find((r) => r.type === "ORDER")?.id && (
+                    <a
+                      href={`https://www.sandbox.paypal.com/checkoutnow?token=${encodeURIComponent(transaction.providerReferences.find((r) => r.type === "ORDER")!.id)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex min-h-9 w-full items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      Open PayPal Sandbox approval page ↗
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    disabled={action.busy}
+                    onClick={() => void action.run(async () => {
+                      await transactionsService.captureCheckoutOrder(
+                        transaction.title || transaction.id,
+                        crypto.randomUUID()
+                      );
+                      await refresh();
+                    }, "Payment captured and confirmed successfully!")}
+                    className="min-h-10 w-full rounded-lg bg-emerald-600 px-4 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+                  >
+                    {action.busy ? "Capturing payment…" : "Capture & complete payment"}
+                  </button>
+                  {action.feedback}
+                </div>
               )}
             </section>
 

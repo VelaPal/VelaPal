@@ -235,9 +235,19 @@ commerceRouter.post("/checkout/orders/:id/capture", requireSession, async (req, 
     }
 
     const { paypalOrderId, snapshotHash } = req.body || {};
-    const tx = await prisma.transaction.findUnique({ where: { orderId: req.params.id } });
-    if (!tx || tx.customerId !== req.auth!.userId) {
-      throw new AppError(403, "FORBIDDEN", "Order does not belong to the authenticated customer");
+    const tx = await prisma.transaction.findFirst({
+      where: {
+        OR: [{ orderId: req.params.id }, { id: req.params.id }],
+      },
+    });
+    const isAuthorized =
+      tx &&
+      (tx.customerId === req.auth!.userId ||
+        (req.auth!.workspaceType === "SELLER" && (!req.auth!.merchantId || tx.merchantId === req.auth!.merchantId)) ||
+        req.auth!.workspaceType === "ADMIN");
+
+    if (!tx || !isAuthorized) {
+      throw new AppError(403, "FORBIDDEN", "Order does not belong to the active workspace or customer");
     }
 
     const snap = await prisma.purchaseSnapshot.findUnique({ where: { id: tx.snapshotId } });
@@ -262,7 +272,8 @@ commerceRouter.post("/checkout/orders/:id/capture", requireSession, async (req, 
           verifiedAt: new Date(),
         },
       });
-    } catch {
+    } catch (captureErr) {
+      console.error("[PayPal Capture Error]", captureErr);
       opStatus = "UNKNOWN";
       await prisma.transaction.update({
         where: { id: tx.id },
@@ -356,9 +367,23 @@ commerceRouter.get("/transactions/:id", requireSession, async (req, res) => {
       },
     });
 
+    const snapshotPayload = snapshot
+      ? {
+          snapshotId: snapshot.id,
+          sku: snapshot.sku,
+          variantId: snapshot.variantId,
+          quantity: snapshot.quantity,
+          amountMinor: snapshot.amountMinor,
+          currency: snapshot.currency,
+          terms: snapshot.terms,
+          snapshotHash: snapshot.snapshotHash,
+          version: snapshot.version,
+        }
+      : null;
+
     return sendSuccess(res, {
       transaction: tx,
-      snapshot,
+      snapshot: snapshotPayload,
       activeCaseId: activeCase?.id || null,
     });
   } catch (err) {

@@ -19,27 +19,36 @@ export const transactionDto = z.object({
   customerId: z.string(),
   merchantId: z.string(),
   merchantName: z.string(),
-  paypalOrderId: z.string().nullable(),
-  paypalCaptureId: z.string().nullable(),
+  paypalOrderId: z.string().nullable().default(null),
+  paypalCaptureId: z.string().nullable().default(null),
   amountMinor: moneyMinor,
-  refundableRemainingMinor: moneyMinor,
+  refundableRemainingMinor: moneyMinor.default(0),
   currency: z.literal("USD"),
   paymentStatus,
-  verifiedAt: z.string().nullable(),
+  verifiedAt: z.string().nullable().default(null),
 });
 export const snapshotDto = z.object({
-  snapshotId: z.string(),
-  sku: z.string(),
-  variantId: z.string(),
-  quantity: z.number().int().positive().optional(),
+  snapshotId: z.string().optional(),
+  id: z.string().optional(),
+  sku: z.string().default(""),
+  variantId: z.string().default(""),
+  quantity: z.number().int().positive().optional().default(1),
   amountMinor: moneyMinor,
-  currency: z.literal("USD"),
+  currency: z.literal("USD").default("USD"),
   snapshotHash: z.string().optional(),
-});
+}).transform((val) => ({
+  snapshotId: val.snapshotId || val.id || "",
+  sku: val.sku,
+  variantId: val.variantId,
+  quantity: val.quantity,
+  amountMinor: val.amountMinor,
+  currency: "USD" as const,
+  snapshotHash: val.snapshotHash,
+}));
 export const transactionDetailDto = z.object({
   transaction: transactionDto,
   snapshot: snapshotDto,
-  activeCaseId: z.string().nullable(),
+  activeCaseId: z.string().nullable().default(null),
 });
 export const catalogDto = z.object({
   items: z.array(

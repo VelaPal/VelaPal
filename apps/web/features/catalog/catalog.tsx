@@ -156,12 +156,6 @@ export default function Catalog() {
               quote={quote}
               selection={selection}
             />
-            <p className="text-sm text-amber-800">
-              Checkout submission is unavailable: the frozen contract describes
-              the endpoint but does not define its request DTO or buyer approval
-              response. No payment will be initiated here until Express
-              publishes that handoff.
-            </p>
           </div>
         )}
         <div className="mt-4">{action.feedback}</div>

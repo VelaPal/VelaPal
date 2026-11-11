@@ -27,7 +27,11 @@ export default function RequestState({ error, loadingLabel = "Loading...",onRetr
       message = "Sign in to VelaPal, then try again.";
     } else if (error.status === 404) {
       message = "This record could not be found or is unavailable.";
+    } else {
+      message = error.message || `Request failed (${error.code || error.status}).`;
     }
+  } else if (error instanceof Error) {
+    message = error.message || message;
   }
 
   return (

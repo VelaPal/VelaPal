@@ -211,9 +211,21 @@ export const PayPalAdapter = {
             },
           },
         ],
+        application_context: {
+          brand_name: "VelaPal",
+          locale: "en-US",
+          landing_page: "LOGIN",
+          shipping_preference: "NO_SHIPPING",
+          user_action: "PAY_NOW",
+          return_url: `${process.env.WEB_ORIGIN || "http://localhost:3000"}/workspace/transactions`,
+          cancel_url: `${process.env.WEB_ORIGIN || "http://localhost:3000"}/workspace/catalog`,
+        },
       }),
     });
-    if (!res.ok) throw new Error(`PayPal createOrder failed: ${res.status}`);
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`PayPal createOrder failed: ${res.status} ${errText}`);
+    }
     return res.json();
   },
 
@@ -227,7 +239,10 @@ export const PayPalAdapter = {
         "PayPal-Request-Id": requestId,
       },
     });
-    if (!res.ok) throw new Error(`PayPal captureOrder failed: ${res.status}`);
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`PayPal captureOrder failed: ${res.status} ${errText}`);
+    }
     return res.json();
   },
 

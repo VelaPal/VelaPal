@@ -183,7 +183,8 @@ export function startDurableOutboxWorker(pollIntervalMs = 2500) {
           signal: AbortSignal.timeout(120_000),
         });
         if (!res.ok) {
-          throw new Error(`AI assessment returned HTTP ${res.status}`);
+          const errBody = await res.text().catch(() => "");
+          throw new Error(`AI assessment returned HTTP ${res.status}: ${errBody}`);
         }
         const aiDto = await res.json();
         const c = payload.caseId
