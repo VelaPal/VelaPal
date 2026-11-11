@@ -70,6 +70,21 @@ export interface SourceRefDTO {
   locator: string;
 }
 
+export type PartyIndication = "CUSTOMER_SUPPORTED" | "SELLER_SUPPORTED" | "INCONCLUSIVE";
+export type QualitativeConfidence = "LOW" | "MODERATE" | "HIGH";
+
+export interface AssessmentCitationDTO extends SourceRefDTO {
+  quote: string;
+}
+
+export interface PartyAssessmentDTO {
+  indication: PartyIndication;
+  confidence: QualitativeConfidence;
+  rationale: string;
+  supportingEvidence: AssessmentCitationDTO[];
+  contraryEvidence: AssessmentCitationDTO[];
+}
+
 export interface SharedAssessmentDTO {
   runId: string;
   inputVersion: number;
@@ -81,6 +96,9 @@ export interface SharedAssessmentDTO {
   verifiedFacts: Array<{ text: string; sourceRefs: SourceRefDTO[] }>;
   claims: Array<{ party: PartyType; text: string; sourceRefs: SourceRefDTO[] }>;
   findings: Array<{ findingId: string; kind: "CONFLICT" | "OBSERVATION" | "GAP"; text: string; sourceRefs: SourceRefDTO[] }>;
+  assessmentNature: "ADVISORY"; // frozen — always present, never optional
+  partyAssessment: PartyAssessmentDTO;
+  recommendation: string;
   missingEvidence: string[];
   uncertainty: string;
   policyReferences: string[];

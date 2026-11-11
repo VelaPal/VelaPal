@@ -1,6 +1,8 @@
-import { apiData, workspaceRequestSignal } from "./api-client";
+import { httpClient } from "@/lib/http-client";
+import { workspaceRequestSignal } from "./api-client";
 import type {
   Audience,
+  AiRunStatus,
   ConsentIntent,
   DisputeCase,
   DisputeCategory,
@@ -23,7 +25,7 @@ function normalizeCase(value: CasePayload): DisputeCase {
 }
 export const disputesService = {
   async list() {
-    const response = await apiData<{
+    const response = await httpClient<{
       items?: CasePayload[];
       nextCursor?: string | null;
     }>("/disputes");
@@ -33,7 +35,7 @@ export const disputesService = {
     } satisfies Items<DisputeCase>;
   },
   async get(caseId: string) {
-    const response = await apiData<
+    const response = await httpClient<
       Omit<BoundDisputeDetail, "case"> & { case: CasePayload }
     >(`/disputes/${id(caseId)}`);
     return {
@@ -51,18 +53,26 @@ export const disputesService = {
     },
     key: string,
   ) {
-    const response = await apiData<{
+    const response = await httpClient<{
       id?: string;
       caseId?: string;
+      transactionId: string | null;
+      orderId: string | null;
+      initiatorParty: "CUSTOMER" | "SELLER";
+      category: DisputeCategory;
+      stage: string;
+      control: string;
       caseVersion: number;
       controlVersion: number;
       privateContextVersion: number;
       accessRevision: number;
+      nextAction: string;
     }>("/disputes", { method: "POST", body, idempotencyKey: key });
     const normalizedId = response.id ?? response.caseId;
     if (!normalizedId)
       throw new Error("Create dispute response is missing its id.");
-    const { caseId: _legacyCaseId, ...fields } = response;
+    const fields = { ...response };
+    delete fields.caseId;
     return { ...fields, id: normalizedId };
   },
   message: (
@@ -74,8 +84,10 @@ export const disputesService = {
     },
     version: number,
   ) =>
-    apiData<{
+    httpClient<{
       messageId: string;
+      party: "CUSTOMER" | "SELLER";
+      audience: Audience;
       caseVersion: number;
       privateContextVersion: number;
     }>(`/disputes/${id(caseId)}/messages`, {
@@ -87,7 +99,7 @@ export const disputesService = {
     caseId: string,
     body: { mime: string; byteCount: number; originalName: string },
   ) =>
-    apiData<{
+    httpClient<{
       sourceId: string;
       uploadId: string;
       sourceVersion: number;
@@ -140,12 +152,19 @@ export const disputesService = {
     uploadId: string,
     sourceVersion: number,
   ) =>
-    apiData<unknown>(
+    httpClient<{
+      sourceId: string;
+      sourceVersion: number;
+      audience: Audience;
+      scanState: "SCANNING";
+      readyForAnalysis: false;
+      indexJobStatus: string;
+    }>(
       `/disputes/${id(caseId)}/sources/${id(sourceId)}/finalize`,
       { method: "POST", body: { uploadId }, ifMatch: sourceVersion },
     ),
   getSource: (caseId: string, sourceId: string) =>
-    apiData<BoundEvidenceSource>(
+    httpClient<BoundEvidenceSource>(
       `/disputes/${id(caseId)}/sources/${id(sourceId)}`,
     ),
   shareSource: (
@@ -155,10 +174,14 @@ export const disputesService = {
     audience: "CASE_SHARED" | "PROVIDER_SHARED",
     paramsHash: string,
   ) =>
-    apiData<{
+    httpClient<{
+      sourceId: string;
       sourceVersion: number;
+      audience: Audience;
+      consentId: string;
       caseVersion: number;
       accessRevision: number;
+      invalidatedProposalIds: string[];
     }>(`/disputes/${id(caseId)}/sources/${id(sourceId)}/share`, {
       method: "POST",
       ifMatch: sourceVersion,
@@ -174,21 +197,25 @@ export const disputesService = {
     sourceVersion: number,
     reason: string,
   ) =>
-    apiData<{
+    httpClient<{
+      sourceId: string;
       sourceVersion: number;
+      audience: "REVOKED";
       caseVersion: number;
       accessRevision: number;
+      invalidatedProposalIds: string[];
+      purgeScheduled: boolean;
     }>(`/disputes/${id(caseId)}/sources/${id(sourceId)}/revoke`, {
       method: "POST",
       ifMatch: sourceVersion,
       body: { reason },
     }),
   assess: (caseId: string, caseVersion: number) =>
-    apiData<{
+    httpClient<{
       runId: string;
       caseId: string;
       inputVersion: number;
-      status: string;
+      status: AiRunStatus;
     }>(`/disputes/${id(caseId)}/assessments`, {
       method: "POST",
       body: {},
@@ -201,7 +228,15 @@ export const disputesService = {
     paramsHash: string,
     decision: "APPROVED" | "REJECTED",
   ) =>
-    apiData<unknown>(`/disputes/${id(caseId)}/mediation-consents`, {
+    httpClient<{
+      consentId: string;
+      caseId: string;
+      party: "CUSTOMER" | "SELLER";
+      intent: "CONTINUE_MEDIATION";
+      decision: "APPROVED" | "REJECTED";
+      caseVersion: number;
+      approvedAt: string;
+    }>(`/disputes/${id(caseId)}/mediation-consents`, {
       method: "POST",
       ifMatch: caseVersion,
       body: {
@@ -222,12 +257,16 @@ export const disputesService = {
       expiresInMinutes: number;
     },
   ) =>
-    apiData<{
+    httpClient<{
       proposalId: string;
       proposalVersion: number;
-      actionRequestId: string;
+      proposerParty: "CUSTOMER" | "SELLER";
       caseVersion: number;
+      stage: string;
+      actionRequestId: string;
       paramsHash: string;
+      requiredConsents: Array<{ party: "CUSTOMER" | "SELLER"; intent: ConsentIntent; status: "PENDING" }>;
+      expiresAt: string;
     }>(`/disputes/${id(caseId)}/proposals`, {
       method: "POST",
       ifMatch: caseVersion,
@@ -241,7 +280,13 @@ export const disputesService = {
       newSourceRefs: SourceRef[];
     },
   ) =>
-    apiData<unknown>(`/disputes/${id(caseId)}/reviews`, {
+    httpClient<{
+      reviewRequestId: string;
+      caseId: string;
+      control: string;
+      controlVersion: number;
+      caseVersion: number;
+    }>(`/disputes/${id(caseId)}/reviews`, {
       method: "POST",
       body,
     }),
@@ -256,7 +301,17 @@ export const disputesService = {
       stepUpId: string | null;
     },
   ) =>
-    apiData<unknown>(`/action-requests/${id(actionRequestId)}/consents`, {
+    httpClient<{
+      consentId: string;
+      actionRequestId: string;
+      party: "CUSTOMER" | "SELLER";
+      intent: "ACCEPT_PROPOSAL_TERMS" | "AUTHORIZE_FINANCIAL_EXECUTION";
+      decision: "APPROVED" | "REJECTED";
+      paramsHash: string;
+      allRequiredConsentsMet: boolean;
+      approvedAt: string;
+      expiresAt: string;
+    }>(`/action-requests/${id(actionRequestId)}/consents`, {
       method: "POST",
       ifMatch: proposalVersion,
       body,
@@ -267,7 +322,14 @@ export const disputesService = {
     paramsHash: string,
     key: string,
   ) =>
-    apiData<unknown>(`/action-requests/${id(actionRequestId)}/execute`, {
+    httpClient<{
+      operationId: string;
+      type: string;
+      actionRequestId: string;
+      caseStage: string;
+      operationStatus: string;
+      pollUrl: string;
+    }>(`/action-requests/${id(actionRequestId)}/execute`, {
       method: "POST",
       ifMatch: caseVersion,
       idempotencyKey: key,

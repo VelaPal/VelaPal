@@ -166,53 +166,118 @@ internalRouter.get("/case-runs/:id/context", async (req, res) => {
 
     if (run.purpose === "PERSONAL_ASSISTANT" || !run.caseId) {
       if (run.purpose !== "PERSONAL_ASSISTANT") throw new AppError(403, "FORBIDDEN", "Case preparation run has no case binding");
-      const [catalogItems, recentTransactions, preferences] = await Promise.all([prisma.product.findMany({ where: { status: "PUBLISHED" }, take: 100 }), prisma.transaction.findMany({
+      const [catalogItems, recentTransactions, preferences] = await Promise.all([prisma.product.findMany({ where: { status: "PUBLISHED" }, orderBy: { id: "asc" }, take: 100 }), prisma.transaction.findMany({
         where: { customerId: run.actorId },
         take: 10,
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       }), prisma.workspacePreference.findUnique({ where: { userId: run.actorId } })]);
-      return res.status(200).json({
+      // Personal assistant runs have no case row, but the AI service still
+      // requires the same signed, version-bound context envelope as case runs.
+      // Keep the signed hash limited to stable inputs so a fresh-context check
+      // during commit produces the same fingerprint.
+      const context: Record<string, unknown> = {
         runId: run.id,
+        actorId: run.actorId,
+        tenantId: run.actorId,
+        caseId: null,
         purpose: "PERSONAL_ASSISTANT",
         audience: "PRIVATE",
+        inputVersion: run.inputVersion,
+        caseVersion: 1,
+        privateContextVersion: 1,
+        accessRevision: 1,
+        policyVersion: "v6.1",
+        businessDataMode: "synthetic_fixture",
+        prompt: run.prompt || "",
+        transactionFacts: null,
+        allowedMessages: [],
+        allowedSources: [],
         personalContext: {
           catalogItems,
           spendingLimitMinor: preferences?.defaultLimitMinor ?? 7500,
           recentTransactions,
+        },
+      };
+      const manifestHash = canonicalHash(context);
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      const manifestPayload = {
+        manifestId: `mf_${crypto.randomBytes(6).toString("hex")}`,
+        replayId: `rpl_${crypto.randomBytes(6).toString("hex")}`,
+        runId: run.id,
+        actorId: run.actorId,
+        tenantId: run.actorId,
+        caseId: null,
+        purpose: "PERSONAL_ASSISTANT",
+        audience: "PRIVATE",
+        inputVersion: run.inputVersion,
+        caseVersion: 1,
+        privateContextVersion: 1,
+        accessRevision: 1,
+        manifestHash,
+        expiresAt,
+      };
+      return res.status(200).json({
+        ...context,
+        signedManifest: {
+          ...manifestPayload,
+          hmacSignature: signManifestHmac(manifestPayload),
         },
       });
     }
 
     const c = await prisma.disputeCase.findUnique({ where: { id: run.caseId } });
     if (!c) throw new AppError(404, "NOT_FOUND", "DisputeCase not found");
+    if (run.accessRevision !== c.accessRevision) {
+      throw new AppError(409, "STALE_CONTEXT", "Case access changed before the AI run started");
+    }
+
+    if (run.purpose === "CUSTOMER_PREPARATION" && run.actorId !== c.customerId) {
+      throw new AppError(403, "FORBIDDEN", "Customer preparation is not bound to the case customer");
+    }
+    if (run.purpose === "SELLER_PREPARATION") {
+      const membership = await prisma.membership.findFirst({
+        where: {
+          userId: run.actorId,
+          status: "ACTIVE",
+          workspace: { type: "SELLER", merchantId: c.merchantId, status: "ACTIVE" },
+        },
+        select: { id: true },
+      });
+      if (!membership) throw new AppError(403, "FORBIDDEN", "Seller preparation is not bound to an active case merchant membership");
+    }
 
     const tx = await prisma.transaction.findFirst({
       where: { OR: [{ id: c.transactionId || "" }, { orderId: c.orderId }] },
     });
 
-    const allowedAudienceFilter =
-      run.purpose === "SHARED_ASSESSMENT"
-        ? { in: ["CASE_SHARED", "PROVIDER_SHARED"] as any }
-        : { in: ["PRIVATE", "CASE_SHARED", "PROVIDER_SHARED"] as any };
-
     const sources = await prisma.caseSource.findMany({
       where: {
         caseId: c.id,
         scanState: "CLEAN",
-        audience: allowedAudienceFilter,
+        OR: run.purpose === "SHARED_ASSESSMENT"
+          ? [{ audience: { in: ["CASE_SHARED", "PROVIDER_SHARED"] } }]
+          : [
+              { audience: { in: ["CASE_SHARED", "PROVIDER_SHARED"] } },
+              { audience: "PRIVATE", ownerId: run.actorId },
+            ],
       },
-      orderBy: { createdAt: "asc" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
 
     const messages = await prisma.caseMessage.findMany({
       where: {
         caseId: c.id,
-        audience: run.purpose === "SHARED_ASSESSMENT" ? "CASE_SHARED" : undefined,
+        OR: run.purpose === "SHARED_ASSESSMENT"
+          ? [{ audience: "CASE_SHARED" }]
+          : [{ audience: "CASE_SHARED" }, { audience: "PRIVATE", authorId: run.actorId }],
       },
-      orderBy: { createdAt: "asc" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
 
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    const now = new Date();
+    const expiresAt = run.manifestExpiresAt && run.manifestExpiresAt > now
+      ? run.manifestExpiresAt
+      : new Date(now.getTime() + 15 * 60 * 1000);
     const allowedSourcesWithHandles = await Promise.all(
       sources.map(async (s) => {
         const handleToken = s.readToken || `hdl_${crypto.randomBytes(8).toString("hex")}`;
@@ -236,68 +301,36 @@ internalRouter.get("/case-runs/:id/context", async (req, res) => {
       })
     );
 
-    const manifestId = `mf_${crypto.randomBytes(6).toString("hex")}`;
-    const replayId = `rpl_${crypto.randomBytes(6).toString("hex")}`;
-    const manifestHash = canonicalHash({
-      caseId: c.id,
-      caseVersion: c.caseVersion,
-      accessRevision: c.accessRevision,
-      sourceIds: allowedSourcesWithHandles.map((s) => `${s.sourceId}:${s.version}`),
-    });
-
-    const hmacSignature = signManifestHmac({
-      manifestId,
-      replayId,
-      audience: run.audience,
-      caseVersion: c.caseVersion,
-      accessRevision: c.accessRevision,
-      manifestHash,
-      expiresAt: expiresAt.toISOString(),
-    });
-
-    await prisma.agentRun.update({
-      where: { id: run.id },
-      data: {
-        manifestId,
-        replayId,
-        manifestHash,
-        hmacSignature,
-        manifestExpiresAt: expiresAt,
-      },
-    });
-
-    return res.status(200).json({
+    const inputVersion = run.purpose === "SHARED_ASSESSMENT" ? c.caseVersion : c.privateContextVersion;
+    const transactionFacts = tx
+      ? {
+          transactionId: tx.id,
+          orderId: tx.orderId,
+          sku: "PD-256-M",
+          variantId: "256GB",
+          amountMinor: tx.amountMinor,
+          refundableRemainingMinor: tx.refundableRemainingMinor,
+          currency: tx.currency,
+          paymentStatus: tx.paymentStatus,
+          snapshotSourceRef: { sourceId: tx.snapshotId, version: 1, locator: "record:1" },
+        }
+      : null;
+    const context: Record<string, unknown> = {
       runId: run.id,
+      actorId: run.actorId,
       tenantId: c.merchantId,
       caseId: c.id,
       purpose: run.purpose,
       audience: run.audience,
+      inputVersion,
       caseVersion: c.caseVersion,
+      privateContextVersion: c.privateContextVersion,
       accessRevision: c.accessRevision,
       policyVersion: "v6.1",
-      signedManifest: {
-        manifestId,
-        replayId,
-        audience: run.audience,
-        caseVersion: c.caseVersion,
-        accessRevision: c.accessRevision,
-        manifestHash,
-        expiresAt: expiresAt.toISOString(),
-        hmacSignature,
-      },
-      transactionFacts: tx
-        ? {
-            transactionId: tx.id,
-            orderId: tx.orderId,
-            sku: "PD-256-M",
-            variantId: "256GB",
-            amountMinor: tx.amountMinor,
-            refundableRemainingMinor: tx.refundableRemainingMinor,
-            currency: tx.currency,
-            paymentStatus: tx.paymentStatus,
-            snapshotSourceRef: { sourceId: tx.snapshotId, version: 1, locator: "record:1" },
-          }
-        : null,
+      businessDataMode: "synthetic_fixture",
+      category: c.category,
+      prompt: run.prompt || "",
+      transactionFacts,
       allowedMessages: messages.map((m, idx) => ({
         messageId: m.id,
         party: m.authorParty,
@@ -307,6 +340,44 @@ internalRouter.get("/case-runs/:id/context", async (req, res) => {
         text: m.text,
       })),
       allowedSources: allowedSourcesWithHandles,
+    };
+    const manifestHash = canonicalHash(context);
+    const sameManifest = run.manifestHash === manifestHash && run.manifestId && run.replayId;
+    const manifestPayload = {
+      manifestId: sameManifest ? run.manifestId! : `mf_${crypto.randomBytes(6).toString("hex")}`,
+      replayId: sameManifest ? run.replayId! : `rpl_${crypto.randomBytes(6).toString("hex")}`,
+      runId: run.id,
+      actorId: run.actorId,
+      tenantId: c.merchantId,
+      caseId: c.id,
+      purpose: run.purpose,
+      audience: run.audience,
+      inputVersion,
+      caseVersion: c.caseVersion,
+      privateContextVersion: c.privateContextVersion,
+      accessRevision: c.accessRevision,
+      manifestHash,
+      expiresAt: expiresAt.toISOString(),
+    };
+    const hmacSignature = signManifestHmac(manifestPayload);
+
+    await prisma.agentRun.update({
+      where: { id: run.id },
+      data: {
+        manifestId: manifestPayload.manifestId,
+        replayId: manifestPayload.replayId,
+        manifestHash,
+        hmacSignature,
+        manifestExpiresAt: expiresAt,
+      },
+    });
+
+    return res.status(200).json({
+      ...context,
+      signedManifest: {
+        ...manifestPayload,
+        hmacSignature,
+      },
     });
   } catch (err) {
     return sendError(res, err);
@@ -326,24 +397,31 @@ internalRouter.post("/case-runs/:id/checkpoints", async (req, res) => {
       const c = await prisma.disputeCase.findUnique({ where: { id: run.caseId } });
       if (!c) throw new AppError(404, "NOT_FOUND", "DisputeCase not found");
 
-      if (Number(inputVersion) !== c.caseVersion || Number(accessRevision) !== c.accessRevision) {
+      const currentInputVersion = run.purpose === "SHARED_ASSESSMENT"
+        ? c.caseVersion
+        : c.privateContextVersion;
+      if (Number(inputVersion) !== currentInputVersion || Number(accessRevision) !== c.accessRevision) {
         await prisma.agentRun.update({ where: { id: run.id }, data: { status: "STALE" } });
         throw new AppError(
           409,
           "STALE_CONTEXT",
-          "Case evidence or access revision changed while run was in flight. Result discarded without publishing.",
+          "Case context or access revision changed while run was in flight. Result discarded without publishing.",
           false,
-          c.caseVersion,
+          currentInputVersion,
           {
-            expectedCaseVersion: Number(inputVersion),
-            currentCaseVersion: c.caseVersion,
+            expectedInputVersion: Number(inputVersion),
+            currentInputVersion,
             expectedAccessRevision: Number(accessRevision),
             currentAccessRevision: c.accessRevision,
           }
         );
       }
 
-      if (run.hmacSignature && hmacSignature && run.hmacSignature !== hmacSignature) {
+      if (
+        !run.manifestId || !run.replayId || !run.manifestHash || !run.hmacSignature ||
+        manifestId !== run.manifestId || replayId !== run.replayId ||
+        manifestHash !== run.manifestHash || hmacSignature !== run.hmacSignature
+      ) {
         throw new AppError(403, "FORBIDDEN", "Signed manifest HMAC verification failed");
       }
 
@@ -355,21 +433,23 @@ internalRouter.post("/case-runs/:id/checkpoints", async (req, res) => {
         },
       });
 
-      if (resultPayload?.requiresHumanApproval) {
-        await prisma.disputeCase.update({
-          where: { id: c.id },
-          data: {
-            stage: "MEDIATING",
-            control: "WAITING_ADMIN",
-            controlVersion: { increment: 1 },
-            gateReason: "MATERIAL_CONFLICT_INVOICE_VS_LABEL",
-          },
-        });
-      } else {
-        await prisma.disputeCase.update({
-          where: { id: c.id },
-          data: { stage: "MEDIATING" },
-        });
+      if (run.purpose === "SHARED_ASSESSMENT") {
+        if (resultPayload?.requiresHumanApproval) {
+          await prisma.disputeCase.update({
+            where: { id: c.id },
+            data: {
+              stage: "MEDIATING",
+              control: "WAITING_ADMIN",
+              controlVersion: { increment: 1 },
+              gateReason: "MATERIAL_CONFLICT_INVOICE_VS_LABEL",
+            },
+          });
+        } else {
+          await prisma.disputeCase.update({
+            where: { id: c.id },
+            data: { stage: "MEDIATING" },
+          });
+        }
       }
 
       return sendSuccess(

@@ -1,4 +1,4 @@
-import { apiData } from "./api-client";
+import { httpClient } from "@/lib/http-client";
 import type {
   AdminCaseQueueItem,
   AdminDetail,
@@ -31,7 +31,7 @@ export const adminService = {
       | "CLOSED" = "ALL",
     assignedToMe = false,
   ) {
-    const response = await apiData<{
+    const response = await httpClient<{
       items?: CaseQueuePayload[];
       nextCursor?: string | null;
     }>(
@@ -43,7 +43,7 @@ export const adminService = {
     } satisfies Items<AdminCaseQueueItem>;
   },
   async detail(caseId: string) {
-    const response = await apiData<
+    const response = await httpClient<
       Omit<AdminDetail, "case"> & { case: AdminDetailCasePayload }
     >(`/admin/disputes/${id(caseId)}`);
     const { caseId: legacyCaseId, ...caseFields } = response.case;
@@ -56,7 +56,12 @@ export const adminService = {
     } satisfies AdminDetail;
   },
   assign: (caseId: string, reviewerId: string, reason: string) =>
-    apiData<unknown>(`/admin/disputes/${id(caseId)}/assignments`, {
+    httpClient<{
+      assignmentId: string;
+      caseId: string;
+      reviewerId: string;
+      assignedAt: string;
+    }>(`/admin/disputes/${id(caseId)}/assignments`, {
       method: "POST",
       body: { reviewerId, reason, conflictDeclarationAccepted: true },
     }),
@@ -73,13 +78,21 @@ export const adminService = {
     reason: string,
     stepUpId: string,
   ) =>
-    apiData<unknown>(`/admin/disputes/${id(caseId)}/interventions`, {
+    httpClient<{
+      decisionId: string;
+      caseId: string;
+      control: string;
+      controlVersion: number;
+      stage: string;
+      caseVersion: number;
+      resumeTriggered: boolean;
+    }>(`/admin/disputes/${id(caseId)}/interventions`, {
       method: "POST",
       ifMatch: controlVersion,
       body: { action, reason, stepUpId },
     }),
   approvalRequests: () =>
-    apiData<Items<ApprovalRequest>>("/admin/approval-requests"),
+    httpClient<Items<ApprovalRequest>>("/admin/approval-requests"),
   decideApproval: (
     requestId: string,
     proposalVersion: number,
@@ -92,13 +105,18 @@ export const adminService = {
       reason: string;
     },
   ) =>
-    apiData<unknown>(`/admin/approval-requests/${id(requestId)}/decisions`, {
+    httpClient<{
+      decisionId: string;
+      approvalRequestId: string;
+      decision: "APPROVED" | "REJECTED";
+      expiresAt: string;
+    }>(`/admin/approval-requests/${id(requestId)}/decisions`, {
       method: "POST",
       ifMatch: proposalVersion,
       body,
     }),
   auditEvents: (caseId?: string) =>
-    apiData<Items<AuditEvent>>(
+    httpClient<Items<AuditEvent>>(
       `/admin/audit-events${caseId ? `?caseId=${id(caseId)}` : ""}`,
     ),
 };

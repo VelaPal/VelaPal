@@ -8,6 +8,7 @@ import {
   canonicalHash,
   generateTraceId,
   mediationConsentParamsHash,
+  sourceShareParamsHash,
   sourceManifestDigest,
 } from "../utils/crypto";
 import { StorageAdapter } from "../integrations/storage.adapter";
@@ -572,6 +573,24 @@ disputesRouter.get("/disputes/:id/sources/:sid", requireSession, async (req, res
         scanState: src.scanState,
         audience: src.audience,
         locator: src.locator,
+        caseVersion: c.caseVersion,
+        accessRevision: c.accessRevision,
+        shareParamsHash:
+          src.audience === "PRIVATE" &&
+          src.ownerParty === actorParty &&
+          src.scanState === "CLEAN"
+            ? sourceShareParamsHash({
+                caseId: c.id,
+                caseVersion: c.caseVersion,
+                accessRevision: c.accessRevision,
+                sourceId: src.id,
+                sourceVersion: src.sourceVersion,
+                sha256: src.sha256,
+                ownerParty: src.ownerParty,
+                actorId: req.auth!.userId,
+                audience: "CASE_SHARED",
+              })
+            : null,
         previewUrl: `/api/v1/disputes/${c.id}/sources/${src.id}/stream?v=${src.sourceVersion}`,
       },
       src.sourceVersion
@@ -603,6 +622,23 @@ disputesRouter.post("/disputes/:id/sources/:sid/share", requireSession, async (r
     if (consentIntent !== "SHARE_SOURCE") {
       throw new AppError(422, "VALIDATION_ERROR", "consentIntent must be SHARE_SOURCE");
     }
+    if (!["CASE_SHARED", "PROVIDER_SHARED"].includes(audience)) {
+      throw new AppError(422, "VALIDATION_ERROR", "Unsupported source audience");
+    }
+    const expectedParamsHash = sourceShareParamsHash({
+      caseId: c.id,
+      caseVersion: c.caseVersion,
+      accessRevision: c.accessRevision,
+      sourceId: src.id,
+      sourceVersion: src.sourceVersion,
+      sha256: src.sha256,
+      ownerParty: src.ownerParty,
+      actorId: req.auth!.userId,
+      audience,
+    });
+    if (!paramsHash || paramsHash !== expectedParamsHash) {
+      throw new AppError(409, "STALE_SOURCE_BINDING", "Refresh this source to get a current consent binding", false, c.caseVersion);
+    }
 
     const traceId = generateTraceId("tr_shr");
     const result = await prisma.$transaction(async (db) => {
@@ -610,14 +646,37 @@ disputesRouter.post("/disputes/:id/sources/:sid/share", requireSession, async (r
       const nextCaseVer = c.caseVersion + 1;
       const nextAccessRev = c.accessRevision + 1;
 
-      const updatedSrc = await db.caseSource.update({
-        where: { id: src.id },
+      const sourceClaim = await db.caseSource.updateMany({
+        where: {
+          id: src.id,
+          sourceVersion: src.sourceVersion,
+          audience: "PRIVATE",
+          scanState: "CLEAN",
+        },
         data: {
-          audience: audience === "PROVIDER_SHARED" ? "PROVIDER_SHARED" : "CASE_SHARED",
+          audience,
           sourceVersion: nextSourceVer,
           sharedAt: new Date(),
         },
       });
+      if (sourceClaim.count === 0) {
+        throw new AppError(409, "VERSION_CONFLICT", "Source changed before sharing", false, src.sourceVersion);
+      }
+
+      const caseClaim = await db.disputeCase.updateMany({
+        where: { id: c.id, caseVersion: c.caseVersion, accessRevision: c.accessRevision },
+        data: {
+          caseVersion: nextCaseVer,
+          accessRevision: nextAccessRev,
+          stage: c.stage === "AWAITING_CONSENT" ? "MEDIATING" : c.stage,
+        },
+      });
+      if (caseClaim.count === 0) {
+        throw new AppError(409, "VERSION_CONFLICT", "Case changed before sharing", false, c.caseVersion);
+      }
+
+      const updatedSrc = await db.caseSource.findUniqueOrThrow({ where: { id: src.id } });
+      const updatedCase = await db.disputeCase.findUniqueOrThrow({ where: { id: c.id } });
 
       const consent = await db.partyConsent.create({
         data: {
@@ -627,7 +686,7 @@ disputesRouter.post("/disputes/:id/sources/:sid/share", requireSession, async (r
           party: actorParty,
           intent: "SHARE_SOURCE",
           decision: "APPROVED",
-          paramsHash: String(paramsHash || `sha256_share_${src.id}_v${src.sourceVersion}`),
+          paramsHash: expectedParamsHash,
           caseVersion: nextCaseVer,
           expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000),
         },
@@ -655,15 +714,6 @@ disputesRouter.post("/disputes/:id/sources/:sid/share", requireSession, async (r
           data: { revoked: true },
         });
       }
-
-      const updatedCase = await db.disputeCase.update({
-        where: { id: c.id },
-        data: {
-          caseVersion: nextCaseVer,
-          accessRevision: nextAccessRev,
-          stage: c.stage === "AWAITING_CONSENT" ? "MEDIATING" : c.stage,
-        },
-      });
 
       await db.auditEvent.create({
         data: {
@@ -1133,6 +1183,20 @@ disputesRouter.post("/disputes/:id/proposals", requireSession, async (req, res) 
           currency,
           paramsHash,
           status: "AWAITING_CONSENT",
+        },
+      });
+
+      await db.approvalRequest.create({
+        data: {
+          caseId: c.id,
+          actionRequestId: actReq.id,
+          scope: "ALLOW_VOLUNTARY_SETTLEMENT_PROPOSAL",
+          amountMinor,
+          currency,
+          paramsHash,
+          caseVersion: nextCaseVer,
+          proposalVersion,
+          status: "PENDING",
         },
       });
 

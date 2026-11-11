@@ -47,10 +47,18 @@ class Finding(Strict):
     kind: Literal["OBSERVATION", "CONFLICT", "GAP"]
     text: str = Field(min_length=1, max_length=900)
     citations: list[Citation] = Field(min_length=1, max_length=4)
+class PartyAssessment(Strict):
+    indication: Literal["CUSTOMER_SUPPORTED", "SELLER_SUPPORTED", "INCONCLUSIVE"] = "INCONCLUSIVE"
+    confidence: Literal["LOW", "MODERATE", "HIGH"] = "LOW"
+    rationale: str = Field(default="", max_length=700)
+    supportingEvidence: list[Citation] = Field(default_factory=list, max_length=4)
+    contraryEvidence: list[Citation] = Field(default_factory=list, max_length=4)
 class Draft(Strict):
     findings: list[Finding] = Field(default_factory=list, max_length=10)
+    partyAssessment: PartyAssessment = Field(default_factory=PartyAssessment)
     missingEvidence: list[str] = Field(default_factory=list, max_length=6)
     uncertainty: str = Field(default="", max_length=700)
+    recommendation: str = Field(default="Request review of the cited evidence before taking action.", max_length=700)
     nextStep: Step = "REQUEST_CLARIFICATION"
     needsReview: bool = False
 class Extraction(Strict):

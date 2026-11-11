@@ -19,6 +19,13 @@ import { Panel, Badge, ErrorNotice, useAction } from "@/components/ui/workflow";
 type Turn = { prompt: string; run: AgentRun };
 function RunReply({ run }: { run: AgentRun }) {
   const payload = run.result;
+  const resultMode =
+    payload &&
+    typeof payload === "object" &&
+    "modelMode" in payload &&
+    (payload.modelMode === "live" || payload.modelMode === "fixture")
+      ? payload.modelMode
+      : undefined;
   const text =
     payload &&
     typeof payload === "object" &&
@@ -32,7 +39,11 @@ function RunReply({ run }: { run: AgentRun }) {
     <div className="vp-chat-reply">
       <div className="flex flex-wrap gap-2">
         <Badge>{run.status}</Badge>
-        <Badge>{run.modelMode === "live" ? "Live AI" : "Simulated AI"}</Badge>
+        {(run.modelMode || resultMode) && (
+          <Badge>
+            {(run.modelMode || resultMode) === "live" ? "Live AI" : "Fixture AI"}
+          </Badge>
+        )}
         <Badge>PRIVATE</Badge>
       </div>
       {["QUEUED", "RUNNING"].includes(run.status) && (
@@ -54,7 +65,7 @@ function RunReply({ run }: { run: AgentRun }) {
         <p>The run failed. You can submit a new question.</p>
       )}
       {text && <p>{text}</p>}
-      {payload !== undefined && !text && (
+      {payload != null && !text && (
         <pre className="whitespace-pre-wrap break-words">
           {JSON.stringify(payload, null, 2)}
         </pre>
@@ -260,11 +271,6 @@ export function Assistant({ caseId = null }: { caseId?: string | null }) {
         <p>
           <ShieldCheck size={11} />
           You review and approve every payment or case action.
-          {process.env.NEXT_PUBLIC_API_MODE !== "api" && (
-            <span>
-               Two Perspectives. One Fair Resolution. Powered by AI
-            </span>
-          )}
         </p>
       </div>
     </section>

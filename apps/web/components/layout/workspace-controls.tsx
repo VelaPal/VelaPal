@@ -95,7 +95,6 @@ export default function WorkspaceControls() {
       : role === "SELLER"
         ? "Seller workspace"
         : "Personal workspace";
-  const mock = process.env.NEXT_PUBLIC_API_MODE !== "api";
   return (
     <>
       <header className="vp-topbar">
@@ -108,7 +107,7 @@ export default function WorkspaceControls() {
         <div className="vp-topbar-actions">
           <span className="vp-connection">
             <i aria-hidden="true" />
-            {mock ? "VelaPal demo" : "VelaPal workspace"}
+            VelaPal workspace
           </span>
           {role === "ADMIN" ? (
             <button
@@ -141,19 +140,6 @@ export default function WorkspaceControls() {
           </Link>
         </div>
       </header>
-      {mock && (
-        <details className="vp-demo-strip">
-          <summary>
-            <span>Fictional data · No real payments, scans, or AI calls.</span>
-            <span>About this demo ↗</span>
-          </summary>
-          <p>
-            Synthetic demo · AI, scans and business records are simulated. No
-            PayPal or Gemini calls. API data resets when the mock API restarts.
-            Local previews can be reset in Settings.
-          </p>
-        </details>
-      )}
     </>
   );
 }

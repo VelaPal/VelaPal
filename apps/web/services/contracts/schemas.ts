@@ -61,9 +61,15 @@ export const catalogDto = z.object({
 });
 export const quoteDto = z.object({
   quoteId: z.string(),
+  merchantId: z.string().optional(),
+  productId: z.string().optional(),
+  sku: z.string().optional(),
+  variantId: z.string().optional(),
+  quantity: z.number().int().positive().optional(),
   amountMinor: moneyMinor,
   currency: z.literal("USD"),
+  spendingLimitMinor: moneyMinor.optional(),
+  ruleResult: z.string(),
   quoteVersion: z.number().int().positive(),
   expiresAt: z.string(),
-  ruleResult: z.string(),
 });

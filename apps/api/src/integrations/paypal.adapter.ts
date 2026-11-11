@@ -1,6 +1,6 @@
 import { minorToDecimal } from "../utils/crypto";
 
-const BASE_URL = process.env.PAYPAL_BASE_URL || "https://api-m.sandbox.paypal.com";
+const BASE_URL = "https://api-m.sandbox.paypal.com";
 const CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || "";
 
@@ -191,14 +191,6 @@ export const PayPalAdapter = {
   },
 
   async createOrder(params: { customId: string; amountMinor: number; currency: string; requestId: string }) {
-    if (!this.isConfigured()) {
-      const mockId = `5O190127TN${Date.now().toString().slice(-7)}`;
-      return {
-        id: mockId,
-        status: "CREATED",
-        links: [{ rel: "approve", href: `https://www.sandbox.paypal.com/checkoutnow?token=${mockId}` }],
-      };
-    }
     const token = await this.getAccessToken();
     const res = await fetch(`${BASE_URL}/v2/checkout/orders`, {
       method: "POST",
@@ -226,19 +218,6 @@ export const PayPalAdapter = {
   },
 
   async captureOrder(paypalOrderId: string, requestId: string) {
-    if (!this.isConfigured()) {
-      return {
-        id: paypalOrderId,
-        status: "COMPLETED",
-        purchase_units: [
-          {
-            payments: {
-              captures: [{ id: `2GG903537H${Date.now().toString().slice(-7)}`, status: "COMPLETED" }],
-            },
-          },
-        ],
-      };
-    }
     const token = await this.getAccessToken();
     const res = await fetch(`${BASE_URL}/v2/checkout/orders/${paypalOrderId}/capture`, {
       method: "POST",
@@ -259,12 +238,6 @@ export const PayPalAdapter = {
     note: string;
     requestId: string;
   }) {
-    if (!this.isConfigured()) {
-      return {
-        id: `9JU7654321${Date.now().toString().slice(-7)}`,
-        status: "COMPLETED",
-      };
-    }
     const token = await this.getAccessToken();
     const res = await fetch(`${BASE_URL}/v2/payments/captures/${params.captureId}/refund`, {
       method: "POST",
@@ -286,9 +259,6 @@ export const PayPalAdapter = {
   },
 
   async getRefund(refundId: string) {
-    if (!this.isConfigured()) {
-      return { id: refundId, status: "COMPLETED" };
-    }
     const token = await this.getAccessToken();
     const res = await fetch(`${BASE_URL}/v2/payments/refunds/${refundId}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -298,9 +268,6 @@ export const PayPalAdapter = {
   },
 
   async getCapture(captureId: string) {
-    if (!this.isConfigured()) {
-      return { id: captureId, status: "COMPLETED" };
-    }
     const token = await this.getAccessToken();
     const res = await fetch(`${BASE_URL}/v2/payments/captures/${captureId}`, {
       headers: { Authorization: `Bearer ${token}` },

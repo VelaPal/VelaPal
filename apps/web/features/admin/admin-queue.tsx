@@ -15,8 +15,7 @@ import { adminService } from "@/services/contracts/admin.service";
 import { ErrorNotice, Panel } from "@/components/ui/workflow";
 import StatCard from "@/components/ui/stat-card";
 import { AdminHeading, AdminBadge } from "./admin-ui";
-import { AdminOverview, RecentAdminPreviewActivity } from "./admin-pages";
-import { useAdminPreview } from "./use-admin-preview";
+import { AdminOverview } from "./admin-pages";
 import { Approval } from "./admin-investigation";
 const stageLabels: Record<string, string> = {
   AWAITING_EVIDENCE: "Waiting for evidence",
@@ -30,7 +29,6 @@ const stageLabels: Record<string, string> = {
 };
 export function AdminQueue({ overview = false }: { overview?: boolean }) {
   const { session } = useSession();
-  const { enabled } = useAdminPreview();
   const [filter, setFilter] = useState("All cases");
   const [mine, setMine] = useState(false);
   const [query, setQuery] = useState("");
@@ -82,13 +80,12 @@ export function AdminQueue({ overview = false }: { overview?: boolean }) {
           <span className="vp-admin-governance">
             <ShieldCheck size={14} />
             {overview ? "MFA verified" : "Human-governed"}
-            {enabled ? " · demo" : ""}
           </span>
         }
       />
       <ErrorNotice error={queue.error} />
       {queue.isLoading && <p role="status">Loading queue...</p>}
-      {overview && enabled ? (
+      {overview ? (
         <>
           <AdminOverview
             caseCount={all.filter((c) => !closed(c.stage)).length}
@@ -97,7 +94,6 @@ export function AdminQueue({ overview = false }: { overview?: boolean }) {
               all[0]?.id
             }
           />
-          <RecentAdminPreviewActivity />
         </>
       ) : (
         <>

@@ -18,7 +18,6 @@ export default function LoginPage() {
   const { accept, loading } = useSession();
   const router = useRouter();
   const action = useAction();
-  const mock = process.env.NEXT_PUBLIC_API_MODE !== "api";
   return (
     <AuthLayout>
       <div className="vp-auth-heading">
@@ -125,33 +124,6 @@ export default function LoginPage() {
           Back to sign in
         </button>
       )}
-      {mock && (
-        <div className="vp-auth-demo">
-          <p className="vp-eyebrow">EXPLORE WITH A DEMO ACCOUNT</p>
-          <div>
-            {["Customer", "Seller", "Admin"].map((role) => (
-              <button
-                type="button"
-                key={role}
-                className="vp-secondary"
-                onClick={() => {
-                  setEmail(`${role.toLowerCase()}@velapal.demo`);
-                  setPassword("demo12345");
-                  setChallenge("");
-                }}
-              >
-                {role}
-                <ArrowRight size={13} />
-              </button>
-            ))}
-          </div>
-          <p>
-            Fills fictional credentials. Then select Sign in.
-            <br />
-            Demo password: demo12345 · MFA: 123456.
-          </p>
-        </div>
-      )}
       {!challenge && (
         <>
           <p className="vp-auth-switch">
@@ -164,7 +136,7 @@ export default function LoginPage() {
       )}
       <p className="vp-auth-disclosure">
         <ShieldCheck size={13} />
-        Your decisions stay yours. Use fictional credentials in this prototype.
+        Your account is authenticated by VelaPal’s API.
       </p>
     </AuthLayout>
   );

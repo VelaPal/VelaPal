@@ -6,63 +6,62 @@ import type {
   TransactionsQuery,
 } from "@/features/transactions/types";
 import type { Transaction as ApiTransaction } from "@/services/contracts/types";
-function row(t: ApiTransaction) {
+
+function toRow(transaction: ApiTransaction) {
   return {
-    id: t.id,
-    title: t.orderId,
-    merchantName: t.merchantName,
-    amountCents: t.amountMinor,
-    currency: t.currency,
-    status: t.paymentStatus,
-    createdAt: t.verifiedAt,
+    id: transaction.id,
+    title: transaction.orderId,
+    merchantName: transaction.merchantName,
+    amountCents: transaction.amountMinor,
+    currency: transaction.currency,
+    status: transaction.paymentStatus,
+    createdAt: transaction.verifiedAt,
   };
 }
-export async function getTransactions(
-  input: TransactionsQuery,
-): Promise<TransactionListResponse> {
-  const q = transactionsQuerySchema.parse(input);
-  const result = await transactionsService.list();
-  const matching = result.items
-    .map(row)
+
+export async function getTransactions(input: TransactionsQuery): Promise<TransactionListResponse> {
+  const query = transactionsQuerySchema.parse(input);
+  const { items } = await transactionsService.list();
+  const matching = items
+    .map(toRow)
     .filter(
-      (t) =>
-        (q.status === "ALL" || t.status === q.status) &&
-        `${t.id} ${t.title} ${t.merchantName}`
+      (transaction) =>
+        (query.status === "ALL" || transaction.status === query.status) &&
+        `${transaction.id} ${transaction.title} ${transaction.merchantName}`
           .toLowerCase()
-          .includes(q.q.toLowerCase()),
+          .includes(query.q.toLowerCase()),
     );
-  const start = q.cursor ? matching.findIndex((t) => t.id === q.cursor) + 1 : 0;
-  const items = matching.slice(start, start + q.limit);
+  const cursorIndex = query.cursor
+    ? matching.findIndex((transaction) => transaction.id === query.cursor) + 1
+    : 0;
+  const start = Math.max(0, cursorIndex);
+  const page = matching.slice(start, start + query.limit);
+
   return {
-    items,
+    items: page,
     nextCursor:
-      start + items.length < matching.length
-        ? (items.at(-1)?.id ?? null)
-        : null,
+      start + page.length < matching.length ? page.at(-1)?.id ?? null : null,
   };
 }
+
 export async function getTransaction(id: string): Promise<TransactionDetail> {
-  const {
-    transaction: t,
-    snapshot: s,
-    activeCaseId,
-  } = await transactionsService.get(id);
+  const { transaction, snapshot, activeCaseId } = await transactionsService.get(id);
   return {
-    ...row(t),
+    ...toRow(transaction),
     snapshot: {
-      productName: s.sku,
-      description: `Variant: ${s.variantId} · Snapshot: ${s.snapshotId}`,
-      quantity: s.quantity ?? 1,
-      unitPriceCents: s.amountMinor,
-      termsVersion: s.snapshotHash ?? "Not supplied",
+      productName: snapshot.sku,
+      description: `Variant: ${snapshot.variantId} · Snapshot: ${snapshot.snapshotId}`,
+      quantity: snapshot.quantity ?? 1,
+      unitPriceCents: snapshot.amountMinor,
+      termsVersion: snapshot.snapshotHash ?? "Not supplied",
       approvedAt: null,
     },
     providerReferences: [
-      ...(t.paypalOrderId
-        ? [{ type: "ORDER" as const, id: t.paypalOrderId }]
+      ...(transaction.paypalOrderId
+        ? [{ type: "ORDER" as const, id: transaction.paypalOrderId }]
         : []),
-      ...(t.paypalCaptureId
-        ? [{ type: "CAPTURE" as const, id: t.paypalCaptureId }]
+      ...(transaction.paypalCaptureId
+        ? [{ type: "CAPTURE" as const, id: transaction.paypalCaptureId }]
         : []),
     ],
     activeCaseId,

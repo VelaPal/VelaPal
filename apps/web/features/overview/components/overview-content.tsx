@@ -1,6 +1,6 @@
 "use client";
 
-import { ApiError } from "@/lib/http-client";
+import { ApiError } from "@/services/contracts/api-client";
 import { useOverview } from "@/features/overview/hooks/use-overview";
 import OverviewSummary from "./overview-summary";
 

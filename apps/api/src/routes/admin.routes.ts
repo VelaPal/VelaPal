@@ -45,6 +45,144 @@ function requireAdminWorkspace(req: any) {
   }
 }
 
+// Read-only operational screens. These are deliberately sourced from the
+// application database so the Admin workspace never has to fall back to UI fixtures.
+adminRouter.get("/admin/users", requireSession, async (req, res) => {
+  try {
+    requireAdminWorkspace(req);
+    const users = await prisma.user.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 250,
+      select: {
+        id: true,
+        name: true,
+        emailCanonical: true,
+        status: true,
+        mfaEnabled: true,
+        createdAt: true,
+        memberships: {
+          where: { status: "ACTIVE" },
+          select: { role: true, workspace: { select: { id: true, name: true, type: true } } },
+        },
+      },
+    });
+    return sendSuccess(res, {
+      items: users.map((user) => ({
+        ...user,
+        createdAt: user.createdAt.toISOString(),
+        memberships: user.memberships.map((membership) => ({
+          role: membership.role,
+          workspaceId: membership.workspace.id,
+          workspaceName: membership.workspace.name,
+          workspaceType: membership.workspace.type,
+        })),
+      })),
+    });
+  } catch (err) { return sendError(res, err); }
+});
+
+adminRouter.get("/admin/transactions", requireSession, async (req, res) => {
+  try {
+    requireAdminWorkspace(req);
+    const items = await prisma.transaction.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 250,
+      select: {
+        id: true, orderId: true, customerId: true, merchantId: true, merchantName: true,
+        amountMinor: true, refundableRemainingMinor: true, currency: true,
+        paymentStatus: true, paypalOrderId: true, paypalCaptureId: true,
+        verifiedAt: true, createdAt: true,
+      },
+    });
+    return sendSuccess(res, { items: items.map((item) => ({
+      ...item,
+      verifiedAt: item.verifiedAt?.toISOString() ?? null,
+      createdAt: item.createdAt.toISOString(),
+    })) });
+  } catch (err) { return sendError(res, err); }
+});
+
+adminRouter.get("/admin/ai-runs", requireSession, async (req, res) => {
+  try {
+    requireAdminWorkspace(req);
+    const [runs, jobStates] = await Promise.all([
+      prisma.agentRun.findMany({ orderBy: { createdAt: "desc" }, take: 200, select: {
+        id: true, actorId: true, caseId: true, purpose: true, audience: true,
+        status: true, inputVersion: true, createdAt: true, updatedAt: true, resultPayload: true,
+      } }),
+      prisma.outboxJob.groupBy({ by: ["state"], _count: { _all: true } }),
+    ]);
+    return sendSuccess(res, {
+      items: runs.map((run) => {
+        const result = run.resultPayload && typeof run.resultPayload === "object" && !Array.isArray(run.resultPayload)
+          ? run.resultPayload as Record<string, unknown> : null;
+        return {
+          runId: run.id, actorId: run.actorId, caseId: run.caseId, purpose: run.purpose,
+          audience: run.audience, status: run.status, inputVersion: run.inputVersion,
+          modelMode: typeof result?.modelMode === "string" ? result.modelMode : null,
+          createdAt: run.createdAt.toISOString(), updatedAt: run.updatedAt.toISOString(),
+        };
+      }),
+      jobs: jobStates.map((item) => ({ state: item.state, count: item._count._all })),
+    });
+  } catch (err) { return sendError(res, err); }
+});
+
+adminRouter.get("/admin/analytics", requireSession, async (req, res) => {
+  try {
+    requireAdminWorkspace(req);
+    const [users, workspaces, transactions, cases, providers, stageCounts, paymentCounts] = await Promise.all([
+      prisma.user.count(), prisma.workspace.count(), prisma.transaction.count(),
+      prisma.disputeCase.count(), prisma.providerOperation.count(),
+      prisma.disputeCase.groupBy({ by: ["stage"], _count: { _all: true } }),
+      prisma.transaction.groupBy({ by: ["paymentStatus"], _count: { _all: true } }),
+    ]);
+    return sendSuccess(res, {
+      totals: { users, workspaces, transactions, cases, providerOperations: providers },
+      casesByStage: stageCounts.map((item) => ({ stage: item.stage, count: item._count._all })),
+      transactionsByStatus: paymentCounts.map((item) => ({ status: item.paymentStatus, count: item._count._all })),
+    });
+  } catch (err) { return sendError(res, err); }
+});
+
+adminRouter.get("/admin/roles", requireSession, async (req, res) => {
+  try {
+    requireAdminWorkspace(req);
+    const memberships = await prisma.membership.findMany({
+      orderBy: [{ workspace: { type: "asc" } }, { role: "asc" }],
+      take: 500,
+      select: {
+        id: true, userId: true, role: true, permissions: true, status: true,
+        user: { select: { name: true, emailCanonical: true } },
+        workspace: { select: { id: true, name: true, type: true } },
+      },
+    });
+    return sendSuccess(res, { items: memberships.map((item) => ({
+      membershipId: item.id, userId: item.userId, name: item.user.name,
+      email: item.user.emailCanonical, role: item.role, permissions: item.permissions,
+      status: item.status, workspaceId: item.workspace.id, workspaceName: item.workspace.name,
+      workspaceType: item.workspace.type,
+    })) });
+  } catch (err) { return sendError(res, err); }
+});
+
+adminRouter.get("/admin/settings", requireSession, async (req, res) => {
+  try {
+    requireAdminWorkspace(req);
+    await prisma.user.count();
+    return sendSuccess(res, {
+      service: { name: "VelaPal API", status: "CONNECTED", contractVersion: "6.1.2" },
+      integrations: {
+        database: "CONNECTED",
+        paypal: process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET ? "CONFIGURED" : "NOT_CONFIGURED",
+        ai: process.env.AI_SERVICE_URL ? "ENDPOINT_CONFIGURED" : "LOCAL_DEFAULT_ENDPOINT",
+        storage: process.env.S3_ENDPOINT ? "ENDPOINT_CONFIGURED" : "LOCAL_DEFAULT_ENDPOINT",
+      },
+      checkedAt: new Date().toISOString(),
+    });
+  } catch (err) { return sendError(res, err); }
+});
+
 // GET /api/v1/admin/disputes
 adminRouter.get("/admin/disputes", requireSession, async (req, res) => {
   try {
@@ -285,6 +423,7 @@ adminRouter.get("/admin/approval-requests", requireSession, async (req, res) => 
   try {
     requireAdminWorkspace(req);
     const items = await prisma.approvalRequest.findMany({
+      where: { status: "PENDING" },
       orderBy: { createdAt: "desc" },
     });
     return sendSuccess(res, {
@@ -317,8 +456,28 @@ adminRouter.post("/admin/approval-requests/:id/decisions", requireSession, async
     requireIfMatch(req.headers["if-match"] as string | undefined, ap.proposalVersion);
 
     const { decision, scope, paramsHash, caseVersion, stepUpId, reason } = req.body || {};
+    if (!["APPROVED", "REJECTED"].includes(decision)) {
+      throw new AppError(422, "VALIDATION_ERROR", "Decision must be APPROVED or REJECTED");
+    }
     if (paramsHash !== ap.paramsHash || Number(caseVersion) !== ap.caseVersion || scope !== ap.scope) {
       throw new AppError(409, "STALE_CONSENT", "Approval request parameters or caseVersion do not match", false, ap.caseVersion);
+    }
+    if (ap.status !== "PENDING") {
+      throw new AppError(409, "VERSION_CONFLICT", "Approval request has already been decided", false, ap.caseVersion);
+    }
+    if (ap.actionRequestId) {
+      const [action, approvalCase] = await Promise.all([
+        prisma.actionRequest.findUnique({ where: { id: ap.actionRequestId } }),
+        prisma.disputeCase.findUnique({ where: { id: ap.caseId } }),
+      ]);
+      if (
+        !action ||
+        action.status !== "AWAITING_CONSENT" ||
+        action.caseVersion !== ap.caseVersion ||
+        approvalCase?.caseVersion !== ap.caseVersion
+      ) {
+        throw new AppError(409, "STALE_CONSENT", "Proposal changed before admin review", false, approvalCase?.caseVersion);
+      }
     }
 
     await verifyStepUpToken(req.auth!.userId, stepUpId, "ADMIN_APPROVAL");
@@ -326,15 +485,33 @@ adminRouter.post("/admin/approval-requests/:id/decisions", requireSession, async
     const decisionId = `dec_${Date.now().toString(36)}`;
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
 
-    await prisma.approvalRequest.update({
-      where: { id: ap.id },
-      data: {
-        status: decision === "REJECTED" ? "REJECTED" : "APPROVED",
-        decisionId,
-        reviewerId: req.auth!.userId,
-        reason: String(reason || ""),
-        expiresAt,
-      },
+    await prisma.$transaction(async (db) => {
+      const claimed = await db.approvalRequest.updateMany({
+        where: { id: ap.id, status: "PENDING", proposalVersion: ap.proposalVersion },
+        data: {
+          status: decision,
+          decisionId,
+          reviewerId: req.auth!.userId,
+          reason: String(reason || ""),
+          expiresAt: decision === "APPROVED" ? expiresAt : null,
+        },
+      });
+      if (claimed.count === 0) {
+        throw new AppError(409, "VERSION_CONFLICT", "Approval request was decided by another reviewer", false, ap.caseVersion);
+      }
+      if (decision === "REJECTED" && ap.actionRequestId) {
+        const action = await db.actionRequest.findUnique({ where: { id: ap.actionRequestId } });
+        if (action) {
+          await db.actionRequest.updateMany({
+            where: { id: action.id, status: "AWAITING_CONSENT" },
+            data: { status: "INVALIDATED" },
+          });
+          await db.proposal.updateMany({
+            where: { id: action.proposalId, status: "AWAITING_CONSENT" },
+            data: { status: "REJECTED" },
+          });
+        }
+      }
     });
 
     return sendSuccess(
@@ -434,6 +611,20 @@ adminRouter.post("/action-requests/:id/execute", requireSession, async (req, res
       throw new AppError(409, "STALE_CONSENT", "Missing required bilateral terms consent or merchant financial authorization", false, c.caseVersion);
     }
 
+    const adminApproval = await prisma.approvalRequest.findFirst({
+      where: {
+        actionRequestId: actReq.id,
+        scope: "ALLOW_VOLUNTARY_SETTLEMENT_PROPOSAL",
+        status: "APPROVED",
+        paramsHash: actReq.paramsHash,
+        caseVersion: c.caseVersion,
+        expiresAt: { gt: now },
+      },
+    });
+    if (!adminApproval) {
+      throw new AppError(409, "POLICY_DENIED", "An active admin approval is required before financial execution", false, c.caseVersion);
+    }
+
     const tx = await prisma.transaction.findFirst({
       where: { OR: [{ id: c.transactionId || "" }, { orderId: c.orderId }] },
     });
@@ -458,10 +649,52 @@ adminRouter.post("/action-requests/:id/execute", requireSession, async (req, res
       );
     }
 
-    // Execute the provider request before changing business records. PayPal's
-    // request ID is stable so a retry after a network timeout cannot issue a
-    // second refund.
-    let refundRes: Awaited<ReturnType<typeof PayPalAdapter.refundCapture>>;
+    const traceId = generateTraceId("tr_ref");
+    const claimedOperation = await prisma.$transaction(async (db) => {
+      const claimed = await db.actionRequest.updateMany({
+        where: { id: actReq.id, status: "AWAITING_CONSENT" },
+        data: { status: "EXECUTION_PENDING" },
+      });
+      if (claimed.count === 0) {
+        throw new AppError(409, "VERSION_CONFLICT", "ActionRequest is already executing or has been invalidated", false, c.caseVersion);
+      }
+
+      const reserved = await db.transaction.updateMany({
+        where: { id: tx.id, refundableRemainingMinor: { gte: actReq.amountMinor } },
+        data: { refundableRemainingMinor: { decrement: actReq.amountMinor } },
+      });
+      if (reserved.count === 0) {
+        throw new AppError(409, "VERSION_CONFLICT", "Refundable balance changed before execution could be claimed", false, c.caseVersion);
+      }
+
+      const caseClaim = await db.disputeCase.updateMany({
+        where: { id: c.id, caseVersion: c.caseVersion, control: "RUNNING" },
+        data: { stage: "EXECUTION_PENDING", caseVersion: { increment: 1 } },
+      });
+      if (caseClaim.count === 0) {
+        throw new AppError(409, "VERSION_CONFLICT", "Case changed before execution could be claimed", false, c.caseVersion);
+      }
+
+      return db.providerOperation.create({
+        data: {
+          type: "CAPTURE_REFUND",
+          actionRequestId: actReq.id,
+          caseId: c.id,
+          route: actReq.route,
+          status: "PENDING",
+          amountMinor: actReq.amountMinor,
+          currency: actReq.currency,
+          paypalCaptureId: tx.paypalCaptureId,
+          requestIdKey: `op-ref-${actReq.id}`,
+          nextStep: "PayPal refund is being processed.",
+        },
+      });
+    });
+
+    // The database claim and refundable-balance reservation are committed
+    // before making the provider call. Reuse a stable PayPal request ID.
+    let refundRes: Awaited<ReturnType<typeof PayPalAdapter.refundCapture>> | null = null;
+    let providerError: unknown = null;
     try {
       refundRes = await PayPalAdapter.refundCapture({
         captureId: tx.paypalCaptureId,
@@ -470,32 +703,64 @@ adminRouter.post("/action-requests/:id/execute", requireSession, async (req, res
         note: `VelaPal voluntary settlement for case ${c.id}`,
         requestId: `pp-ref-${actReq.id}`,
       });
-      if (!refundRes.id || refundRes.status !== "COMPLETED") {
-        throw new Error(`PayPal refund was not completed (status: ${refundRes.status || "missing"})`);
-      }
     } catch (err) {
-      const traceId = generateTraceId("tr_ref");
-      console.error(`[PAYPAL REFUND ${traceId}]`, err);
-      throw new AppError(502, "PAYMENT_PROVIDER_ERROR", "PayPal could not confirm the requested refund", true);
+      providerError = err;
     }
 
-    const traceId = generateTraceId("tr_ref");
+    if (!refundRes?.id || refundRes.status !== "COMPLETED") {
+      const nextStep = providerError
+        ? "PayPal outcome is unknown. Reconcile this operation before retrying."
+        : `PayPal returned ${refundRes?.status || "no confirmed status"}. Reconcile this operation before retrying.`;
+      if (providerError) console.error(`[PAYPAL REFUND ${traceId}]`, providerError);
+      const updatedCase = await prisma.$transaction(async (db) => {
+        await db.actionRequest.updateMany({
+          where: { id: actReq.id, status: "EXECUTION_PENDING" },
+          data: { status: "EXECUTION_UNKNOWN" },
+        });
+        await db.providerOperation.update({
+          where: { id: claimedOperation.id },
+          data: {
+            status: "UNKNOWN",
+            providerRef: refundRes?.id ?? null,
+            nextStep,
+          },
+        });
+        const updated = await db.disputeCase.update({
+          where: { id: c.id },
+          data: { stage: "EXECUTION_UNKNOWN", caseVersion: { increment: 1 } },
+        });
+        await db.auditEvent.create({
+          data: {
+            eventName: "FINANCIAL_EXECUTION_UNKNOWN",
+            actorId: req.auth!.userId,
+            workspaceId: req.auth!.workspaceId,
+            actorParty: "SELLER",
+            targetType: "DISPUTE_CASE",
+            targetId: c.id,
+            summary: "PayPal refund outcome requires reconciliation",
+            caseVersion: updated.caseVersion,
+            controlVersion: updated.controlVersion,
+            traceId,
+          },
+        });
+        return updated;
+      });
+      return sendSuccess(res, {
+        operationId: claimedOperation.id,
+        type: claimedOperation.type,
+        actionRequestId: actReq.id,
+        caseStage: updatedCase.stage,
+        operationStatus: "UNKNOWN",
+        pollUrl: `/api/v1/operations/${claimedOperation.id}`,
+        nextStep,
+      }, updatedCase.caseVersion, 202, traceId);
+    }
+
     const { operation, updatedCase } = await prisma.$transaction(async (db) => {
-      const claimed = await db.actionRequest.updateMany({
-        where: { id: actReq.id, status: "AWAITING_CONSENT" },
+      await db.actionRequest.update({
+        where: { id: actReq.id },
         data: { status: "COMPLETED" },
       });
-      if (claimed.count === 0) {
-        throw new AppError(409, "VERSION_CONFLICT", "ActionRequest was already executed or invalidated", false, c.caseVersion);
-      }
-
-      const balanceUpdate = await db.transaction.updateMany({
-        where: { id: tx.id, refundableRemainingMinor: { gte: actReq.amountMinor } },
-        data: { refundableRemainingMinor: { decrement: actReq.amountMinor } },
-      });
-      if (balanceUpdate.count === 0) {
-        throw new AppError(409, "VERSION_CONFLICT", "Refundable balance changed before the refund was recorded", false, c.caseVersion);
-      }
 
       const updatedTx = await db.transaction.findUniqueOrThrow({ where: { id: tx.id } });
       const recordedTx = await db.transaction.update({
@@ -504,18 +769,11 @@ adminRouter.post("/action-requests/:id/execute", requireSession, async (req, res
           paymentStatus: updatedTx.refundableRemainingMinor === 0 ? "REFUNDED" : "PARTIALLY_REFUNDED",
         },
       });
-      const op = await db.providerOperation.create({
+      const op = await db.providerOperation.update({
+        where: { id: claimedOperation.id },
         data: {
-          type: "CAPTURE_REFUND",
-          actionRequestId: actReq.id,
-          caseId: c.id,
-          route: actReq.route,
           status: "SUCCEEDED",
-          amountMinor: actReq.amountMinor,
-          currency: actReq.currency,
-          paypalCaptureId: tx.paypalCaptureId,
           providerRef: refundRes.id,
-          requestIdKey: `op-ref-${actReq.id}`,
           verifiedAt: new Date(),
           nextStep: `Refund of ${actReq.currency} ${(actReq.amountMinor / 100).toFixed(2)} verified by PayPal.`,
         },

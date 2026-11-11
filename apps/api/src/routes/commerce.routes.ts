@@ -249,7 +249,11 @@ commerceRouter.post("/checkout/orders/:id/capture", requireSession, async (req, 
     let captureId: string | null = null;
     try {
       const capRes = await PayPalAdapter.captureOrder(paypalOrderId || tx.paypalOrderId!, `pp-cap-${idem.key}`);
-      captureId = capRes.purchase_units?.[0]?.payments?.captures?.[0]?.id || `2GG903537H${Date.now().toString().slice(-6)}`;
+      const capture = capRes.purchase_units?.[0]?.payments?.captures?.[0];
+      if (!capture?.id || capture.status !== "COMPLETED") {
+        throw new Error(`PayPal capture was not confirmed (status: ${capture?.status || "missing"})`);
+      }
+      captureId = capture.id;
       await prisma.transaction.update({
         where: { id: tx.id },
         data: {
@@ -406,16 +410,26 @@ commerceRouter.post("/operations/:id/reconcile", requireSession, async (req, res
       throw new AppError(404, "NOT_FOUND", "Provider operation not found");
     }
 
-    let verifiedStatus: "SUCCEEDED" | "FAILED" | "UNKNOWN" = "SUCCEEDED";
-    let providerRef = op.providerRef || `9JU7654321${Date.now().toString().slice(-6)}`;
+    let verifiedStatus: "SUCCEEDED" | "FAILED" | "UNKNOWN" = "UNKNOWN";
+    let providerRef = op.providerRef;
 
     try {
       if (op.type === "CAPTURE_REFUND" && op.providerRef) {
         const refData = await PayPalAdapter.getRefund(op.providerRef);
-        verifiedStatus = refData.status === "COMPLETED" ? "SUCCEEDED" : "UNKNOWN";
+        providerRef = refData.id || op.providerRef;
+        verifiedStatus = refData.status === "COMPLETED"
+          ? "SUCCEEDED"
+          : ["FAILED", "CANCELLED"].includes(refData.status)
+            ? "FAILED"
+            : "UNKNOWN";
       } else if (op.type === "ORDER_CAPTURE" && op.paypalCaptureId) {
         const capData = await PayPalAdapter.getCapture(op.paypalCaptureId);
-        verifiedStatus = capData.status === "COMPLETED" ? "SUCCEEDED" : "UNKNOWN";
+        providerRef = capData.id || op.paypalCaptureId;
+        verifiedStatus = capData.status === "COMPLETED"
+          ? "SUCCEEDED"
+          : ["FAILED", "DECLINED"].includes(capData.status)
+            ? "FAILED"
+            : "UNKNOWN";
       }
     } catch {
       verifiedStatus = "UNKNOWN";
@@ -485,6 +499,8 @@ commerceRouter.post("/agent/runs", requireSession, async (req, res) => {
     if (purpose === "PERSONAL_ASSISTANT" && (req.auth!.workspaceType !== "CUSTOMER" || caseId)) {
       throw new AppError(403, "FORBIDDEN", "Personal assistant runs require a Customer workspace and cannot include a case");
     }
+    let contextInputVersion = 1;
+    let contextAccessRevision = 1;
     if (["CUSTOMER_PREPARATION", "SELLER_PREPARATION"].includes(purpose)) {
       if (typeof caseId !== "string") throw new AppError(422, "VALIDATION_ERROR", "Preparation runs require an authorized case");
       const c = await prisma.disputeCase.findUnique({ where: { id: caseId } });
@@ -492,6 +508,8 @@ commerceRouter.post("/agent/runs", requireSession, async (req, res) => {
         ? req.auth!.workspaceType === "CUSTOMER" && c?.customerId === req.auth!.userId
         : req.auth!.workspaceType === "SELLER" && c?.merchantId === req.auth!.merchantId;
       if (!c || !ownsCase) throw new AppError(404, "NOT_FOUND", "Case not found in the active workspace scope");
+      contextInputVersion = c.privateContextVersion;
+      contextAccessRevision = c.accessRevision;
     }
     if (typeof prompt !== "string" || prompt.trim().length < 3 || prompt.length > 2000) {
       throw new AppError(422, "VALIDATION_ERROR", "Prompt must be between 3 and 2000 characters");
@@ -504,6 +522,8 @@ commerceRouter.post("/agent/runs", requireSession, async (req, res) => {
         caseId: caseId ? String(caseId) : null,
         purpose,
         audience: "PRIVATE",
+        inputVersion: contextInputVersion,
+        accessRevision: contextAccessRevision,
         status: "QUEUED",
         prompt: String(prompt),
       },
@@ -516,7 +536,7 @@ commerceRouter.post("/agent/runs", requireSession, async (req, res) => {
           runId: run.id,
           caseId: run.caseId,
           purpose: run.purpose,
-          expectedContextVersion: 1,
+          expectedContextVersion: contextInputVersion,
         },
         traceId,
       },
@@ -531,7 +551,7 @@ commerceRouter.post("/agent/runs", requireSession, async (req, res) => {
         status: run.status,
         pollUrl: `/api/v1/agent/runs/${run.id}`,
       },
-      1,
+      contextInputVersion,
       202,
       traceId
     );

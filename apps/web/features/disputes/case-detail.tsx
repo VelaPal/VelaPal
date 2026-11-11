@@ -85,10 +85,7 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
         </button>
       </div>
     );
-  const bindings =
-    process.env.NEXT_PUBLIC_API_MODE === "api"
-      ? d.consentBindings
-      : d.mockConsentBindings;
+  const bindings = d.consentBindings;
   const refresh = () => result.mutate();
   const assessment = d.latestAssessment;
   const stale =
@@ -185,6 +182,8 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
               caseId={caseId}
               refresh={refresh}
               canUpload={c.capabilities?.canShareEvidence ?? false}
+              caseVersion={c.caseVersion}
+              accessRevision={c.accessRevision}
             />
           </Panel>
         </>

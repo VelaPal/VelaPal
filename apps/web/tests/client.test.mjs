@@ -123,7 +123,7 @@ test("a response cancelled during JSON parsing cannot populate the next workspac
     globalThis.fetch = async () => ({
       status: 200,
       ok: true,
-      json: () =>
+      text: () =>
         new Promise((resolve) => {
           finish = resolve;
         }),
@@ -131,14 +131,14 @@ test("a response cancelled during JSON parsing cannot populate the next workspac
     const pending = client.apiData("/auth/session");
     await new Promise((resolve) => setImmediate(resolve));
     client.cancelWorkspaceRequests();
-    finish({
+    finish(JSON.stringify({
       data: { oldWorkspace: true },
       meta: {
         traceId: "tr_old",
         version: 1,
         timestamp: new Date().toISOString(),
       },
-    });
+    }));
     await assert.rejects(pending, (e) => e.name === "AbortError");
   } finally {
     globalThis.fetch = original;

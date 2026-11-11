@@ -19,8 +19,7 @@ import { disputesService } from "@/services/contracts/disputes.service";
 import { AdminQueue } from "@/features/admin/admin-workspace";
 import StatCard from "@/components/ui/stat-card";
 import RecentTransactions from "@/features/transactions/components/recent-transactions";
-import OperationTracker from "@/features/disputes/operation";
-import { Panel, ErrorNotice } from "@/components/ui/workflow";
+import { ErrorNotice } from "@/components/ui/workflow";
 import { formatMoney } from "@/lib/format";
 import type { Transaction, DisputeCase } from "@/services/contracts/types";
 function SpendingOverview({ transactions }: { transactions: Transaction[] }) {
@@ -529,20 +528,6 @@ export default function WorkspaceDashboard() {
             <RecentTransactions />
           </div>
         </div>
-      )}
-      {process.env.NEXT_PUBLIC_API_MODE !== "api" && (
-        <details className="vp-operation-demo">
-          <summary>
-            Operation reconciliation fixture · synthetic UNKNOWN result
-          </summary>
-          <Panel title="Operation reconciliation fixture">
-            <p className="mb-4 text-sm text-slate-600">
-              Independent synthetic UNKNOWN-operation example. No settlement was
-              executed on the cases above.
-            </p>
-            <OperationTracker operationId="op_ref_01JBYZ" />
-          </Panel>
-        </details>
       )}
     </div>
   );

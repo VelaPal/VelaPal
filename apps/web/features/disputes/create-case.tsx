@@ -181,12 +181,6 @@ export default function CreateCase({
               </li>
             </ol>
           </section>
-          {process.env.NEXT_PUBLIC_API_MODE !== "api" && (
-            <p className="vp-form-note">
-              Demo: a scripted workflow runs locally. Files, AI requests, and
-              payment-provider actions are not sent to external providers.
-            </p>
-          )}
         </aside>
       </div>
     </div>

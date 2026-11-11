@@ -7,6 +7,6 @@ export const operationsService = {
   reconcile: (operationId: string, key: string) =>
     apiData<Operation>(
       `/operations/${encodeURIComponent(operationId)}/reconcile`,
-      { method: "POST", idempotencyKey: key, body: {} },
+      { method: "POST", idempotencyKey: key },
     ),
 };

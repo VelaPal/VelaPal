@@ -9,9 +9,7 @@ export function PublicShell({ children }: { children: ReactNode }) {
         <Brand href="/" />
         <div className="vp-public-header-actions">
           <span className="vp-public-status">
-            {process.env.NEXT_PUBLIC_API_MODE === "api"
-              ? "VelaPal account"
-              : "VelaPal Demo Experience"}
+            VelaPal account
           </span>
           <Link href="/login" className="vp-link">
             Sign in
@@ -23,9 +21,6 @@ export function PublicShell({ children }: { children: ReactNode }) {
       <footer className="vp-public-footer">
         <span>
           © 2026 VelaPal
-          {process.env.NEXT_PUBLIC_API_MODE !== "api"
-            ? " · Fictional demo data"
-            : ""}
         </span>
         <nav aria-label="Public information">
           <Link href="/terms">Terms</Link>

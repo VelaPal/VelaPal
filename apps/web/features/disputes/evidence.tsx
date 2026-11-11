@@ -9,10 +9,14 @@ import { Badge, ErrorNotice, useAction } from "@/components/ui/workflow";
 function Source({
   source: s,
   caseId,
+  caseVersion,
+  accessRevision,
   refresh,
 }: {
   source: EvidenceSource;
   caseId: string;
+  caseVersion: number;
+  accessRevision: number;
   refresh: () => Promise<unknown>;
 }) {
   const { session } = useSession();
@@ -23,6 +27,8 @@ function Source({
     [
       session?.activeWorkspace.id,
       caseId,
+      caseVersion,
+      accessRevision,
       "source",
       s.sourceId,
       s.sourceVersion,
@@ -36,9 +42,11 @@ function Source({
   const source = result.data ?? s;
   const own = source.ownerParty === session?.activeWorkspace.type;
   const binding =
-    process.env.NEXT_PUBLIC_API_MODE !== "api"
-      ? result.data?.mockShareParamsHash
-      : undefined;
+    result.data?.caseVersion === caseVersion &&
+    result.data?.accessRevision === accessRevision &&
+    result.data?.sourceVersion === source.sourceVersion
+      ? result.data.shareParamsHash
+      : null;
   return (
     <li
       id={`source-${s.sourceId}`}
@@ -56,21 +64,9 @@ function Source({
       {source.locator && (
         <p className="text-xs">Source locator: {source.locator}</p>
       )}
-      {result.data?.previewUrl ? (
-        <a
-          className="vp-link"
-          href={result.data.previewUrl}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Open authorized preview
-        </a>
-      ) : (
-        <p className="text-xs text-slate-500">
-          File preview unavailable. Mock scanning does not inspect file
-          contents.
-        </p>
-      )}
+      <p className="text-xs text-slate-500">
+        File contents are available only through the authorized API download flow.
+      </p>
       {own && source.audience === "PRIVATE" && (
         <>
           <label className="flex items-start gap-2 text-sm">
@@ -93,12 +89,15 @@ function Source({
             }
             onClick={() =>
               void action.run(async () => {
+                if (!binding) {
+                  throw new Error("Refresh the case to load a current sharing consent binding.");
+                }
                 await disputesService.shareSource(
                   caseId,
                   source.sourceId,
                   source.sourceVersion,
                   "CASE_SHARED",
-                  binding!,
+                  binding,
                 );
                 setConsent(false);
                 await result.mutate();
@@ -108,10 +107,9 @@ function Source({
           >
             Share with case
           </button>
-          {!binding && source.scanState === "CLEAN" && (
+          {!binding && source.scanState === "CLEAN" && result.data && (
             <p className="text-xs text-amber-800">
-              Sharing unavailable until the backend supplies an authoritative
-              consent binding.
+              Refresh the case to get a current sharing consent binding.
             </p>
           )}
         </>
@@ -156,11 +154,15 @@ export default function Evidence({
   caseId,
   refresh,
   canUpload,
+  caseVersion,
+  accessRevision,
 }: {
   sources: EvidenceSource[];
   caseId: string;
   refresh: () => Promise<unknown>;
   canUpload: boolean;
+  caseVersion: number;
+  accessRevision: number;
 }) {
   const action = useAction();
   const [file, setFile] = useState<File | null>(null);
@@ -227,6 +229,8 @@ export default function Evidence({
             key={s.sourceId}
             source={s}
             caseId={caseId}
+            caseVersion={caseVersion}
+            accessRevision={accessRevision}
             refresh={refresh}
           />
         ))}

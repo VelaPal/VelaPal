@@ -541,7 +541,7 @@ Fetches the full 3-axis case detail (`stage`, `control`, `providerOperation`), p
       "latestAssessment": {
         "runId": "run_shared_02",
         "inputVersion": 5,
-        "status": "COMPLETED",
+        "status": "NEEDS_INFO",
         "audience": "CASE_SHARED",
         "modelMode": "live",
         "businessDataMode": "paypal_sandbox",
@@ -575,11 +575,24 @@ Fetches the full 3-axis case detail (`stage`, `control`, `providerOperation`), p
             "sourceRefs": [{ "sourceId": "src_serial_02", "version": 2, "locator": "image:1" }]
           }
         ],
+        "assessmentNature": "ADVISORY",
+        "partyAssessment": {
+          "indication": "CUSTOMER_SUPPORTED",
+          "confidence": "MODERATE",
+          "rationale": "The serial photo supports the customer's description, while the seller invoice records a different capacity. Admin review is required before deciding next steps.",
+          "supportingEvidence": [
+            { "sourceId": "src_serial_02", "version": 2, "locator": "image:1", "quote": "SN-PD128-9921" }
+          ],
+          "contraryEvidence": [
+            { "sourceId": "src_invoice_01", "version": 2, "locator": "page:1", "quote": "PD-256-M" }
+          ]
+        },
+        "recommendation": "Admin should review the serial and invoice evidence and request a warehouse inventory recount if available.",
         "missingEvidence": [],
         "uncertainty": "Physical serial photo supports a packing mismatch, though warehouse physical inventory recount was not uploaded.",
         "policyReferences": ["POL-DISPUTE-EVIDENCE-01", "POL-VOLUNTARY-REFUND-02"],
-        "nextStep": "PROPOSE_VOLUNTARY_SETTLEMENT",
-        "requiresHumanApproval": false
+        "nextStep": "ESCALATE_TO_ADMIN",
+        "requiresHumanApproval": true
       },
       "activeProposal": {
         "proposalId": "prop_01JBYE",
@@ -1371,6 +1384,7 @@ Fetches the authoritative context for `runId`.
 
 ### 6.4 `POST /internal/v1/case-runs/:id/checkpoints` *(Python FastAPI ➔ Express)*
 Atomically commits the validated assessment result in Express via CAS (`inputVersion === currentCaseVersion` and `accessRevision === currentAccessRevision`).
+For `SHARED_ASSESSMENT`, the committed result includes an **advisory investigation report**. `assessmentNature` is `ADVISORY`; `partyAssessment.indication` is `CUSTOMER_SUPPORTED`, `SELLER_SUPPORTED`, or `INCONCLUSIVE`, and confidence is a qualitative label (`LOW`, `MODERATE`, or `HIGH`), not a calibrated probability. The report must cite exact, authorized evidence quotations using source ID, version, and locator. Unsupported citations are discarded; if citations do not support a directional indication, the service must publish `INCONCLUSIVE` with `LOW` confidence. `recommendation` is for Admin review and cannot authorize a payment or constitute a binding finding of guilt or liability. Admin reviews this report before any intervention or financial execution.
 * **Request Body:**
   ```json
   {
@@ -1412,6 +1426,28 @@ Atomically commits the validated assessment result in Express via CAS (`inputVer
           ]
         }
       ],
+      "assessmentNature": "ADVISORY",
+      "partyAssessment": {
+        "indication": "INCONCLUSIVE",
+        "confidence": "LOW",
+        "rationale": "The available records conflict and do not yet establish which party's account is better supported.",
+        "supportingEvidence": [],
+        "contraryEvidence": [
+          {
+            "sourceId": "src_invoice_01",
+            "version": 2,
+            "locator": "page:1",
+            "quote": "SKU PD-256-M"
+          },
+          {
+            "sourceId": "src_label_01",
+            "version": 2,
+            "locator": "image:1",
+            "quote": "128 GB"
+          }
+        ]
+      },
+      "recommendation": "Request the packing serial or another record linking the shipped unit to this order, then review the conflicting evidence.",
       "missingEvidence": ["Physical serial number or warehouse packing slip linking unit to order"],
       "uncertainty": "Photo of 128 GB label and 256 GB invoice conflict without serial number verification.",
       "policyReferences": ["POL-DISPUTE-EVIDENCE-01"],

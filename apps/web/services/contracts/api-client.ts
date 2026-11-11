@@ -1,8 +1,12 @@
 import type { ApiEnvelope, ApiErrorBody, ApiMeta } from "./types";
 
-/** Prefer same-origin /api/v1 using Next.js rewrites. Never put secrets here. */
-// Frozen browser boundary stays same-origin, irrespective of legacy local env values.
-const baseUrl = "/api/v1";
+/** Use the configured API root or same-origin /api/v1. Never put secrets here. */
+const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
+const baseUrl = configuredApiUrl
+  ? configuredApiUrl.endsWith("/api/v1")
+    ? configuredApiUrl
+    : `${configuredApiUrl}/api/v1`
+  : "/api/v1";
 let csrfToken: string | null = null;
 let workspaceController = new AbortController();
 export function workspaceRequestSignal() {

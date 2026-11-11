@@ -163,6 +163,9 @@ export interface EvidenceSource {
   audience: Audience;
   sha256: string | null;
   locator: string | null;
+  caseVersion?: number;
+  accessRevision?: number;
+  shareParamsHash?: string | null;
 }
 export interface CaseMessage {
   messageId: string;
@@ -183,6 +186,16 @@ export interface AssessmentFinding extends AssessmentFact {
   findingId: string;
   kind: "OBSERVATION" | "CONFLICT" | "GAP" | string;
 }
+export interface AssessmentCitation extends SourceRef {
+  quote: string;
+}
+export interface PartyAssessment {
+  indication: "CUSTOMER_SUPPORTED" | "SELLER_SUPPORTED" | "INCONCLUSIVE";
+  confidence: "LOW" | "MODERATE" | "HIGH";
+  rationale: string;
+  supportingEvidence: AssessmentCitation[];
+  contraryEvidence: AssessmentCitation[];
+}
 export interface LatestAssessment {
   runId: string;
   inputVersion: number;
@@ -194,11 +207,25 @@ export interface LatestAssessment {
   verifiedFacts: AssessmentFact[];
   claims: AssessmentClaim[];
   findings: AssessmentFinding[];
+  assessmentNature: "ADVISORY";
+  partyAssessment: PartyAssessment | null;
+  recommendation: string;
   missingEvidence: string[];
   uncertainty: string;
   policyReferences: string[];
   nextStep: AiNextStep;
   requiresHumanApproval: boolean;
+  /** Optional metadata returned on SHARED_ASSESSMENT runs */
+  manifestHash?: string;
+  modelVersion?: string;
+  promptVersion?: string;
+  policyVersion?: string;
+  counters?: {
+    generativeCalls: number;
+    embeddingQueries: number;
+    retrievedChunks: number;
+    elapsedMs: number;
+  };
 }
 export interface CaseCapabilities {
   canShareEvidence: boolean;
@@ -341,18 +368,8 @@ export interface ConsentBindings {
   sourceDigest: string;
   mediationParamsHash?: string;
 }
-/** Optional mock-only metadata for the embedded API. */
-export interface MockConsentBindings extends ConsentBindings {
-  modelMode: "fixture";
-  mediationParamsHash: string;
-}
-export type BoundDisputeDetail = DisputeDetail & {
-  mockConsentBindings?: MockConsentBindings;
-};
-export type BoundEvidenceSource = EvidenceSource & {
-  mockShareParamsHash?: string;
-  previewUrl?: string | null;
-};
+export type BoundDisputeDetail = DisputeDetail;
+export type BoundEvidenceSource = EvidenceSource;
 export interface AdminDetail {
   case: DisputeCase & {
     assignedReviewerId: string | null;

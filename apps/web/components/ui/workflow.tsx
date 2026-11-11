@@ -30,7 +30,7 @@ export function ErrorNotice({ error }: { error: unknown }) {
     422: "Check the form fields.",
     429: "Too many requests. Wait before trying again.",
     503: "The service is temporarily unavailable. Try again later.",
-    501: "This operation is unavailable in the mock. No money has moved.",
+    501: "This operation is not supported by the API. No money has moved.",
   };
   const duplicate =
     error instanceof ApiError && error.fieldErrors.existingCaseId;
@@ -133,7 +133,6 @@ export function MfaStepUp({
     <div className="space-y-3 rounded-xl border border-slate-200 p-4">
       <p className="text-sm">
         Verify MFA for this action and target.{" "}
-        {process.env.NEXT_PUBLIC_API_MODE !== "api" && "Mock code: 123456."}
       </p>
       {!challenge ? (
         <button

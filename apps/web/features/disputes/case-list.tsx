@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { useCases } from "./hooks";
@@ -43,6 +43,15 @@ export default function CaseList() {
   );
   const [filter, setFilter] = useState("All cases");
   const [query, setQuery] = useState("");
+  useEffect(() => {
+    if (session?.activeWorkspace.type) {
+      setFilter(
+        session.activeWorkspace.type === "SELLER"
+          ? "Incoming disputes"
+          : "All cases",
+      );
+    }
+  }, [session?.activeWorkspace.type]);
   const all = cases.data?.items ?? [];
   const filtered = all.filter(
     (c) =>

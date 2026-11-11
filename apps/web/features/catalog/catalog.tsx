@@ -1,28 +1,21 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import useSWR from "swr";
 import { transactionsService } from "@/services/contracts/transactions.service";
 import { useSession } from "@/features/auth/session";
 import { Panel, Badge, ErrorNotice, useAction } from "@/components/ui/workflow";
 import { formatMoney, formatDate } from "@/lib/format";
 import CheckoutPreview from "./checkout-preview";
-import { useWorkspacePreview } from "@/features/workspace/use-workspace-preview";
-import { moneyFromDollars } from "@/features/workspace/preview-state";
 import { AdminSearch } from "@/features/admin/admin-ui";
 import { workspaceService } from "@/services/contracts/workspace.service";
 type Quote = Awaited<ReturnType<typeof transactionsService.quote>>;
 export default function Catalog() {
   const { session } = useSession();
   const action = useAction();
-  const preview = useWorkspacePreview();
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState("");
   const [quantity, setQuantity] = useState("1");
-  const [limit, setLimit] = useState(
-    ((preview.enabled ? preview.state.defaultLimitMinor : 7500) / 100).toFixed(
-      2,
-    ),
-  );
+  const [limit, setLimit] = useState<string>();
   const [quote, setQuote] = useState<Quote | null>(null);
   const catalog = useSWR(
     session?.activeWorkspace.type === "CUSTOMER"
@@ -31,14 +24,11 @@ export default function Catalog() {
     () => transactionsService.catalog(),
   );
   const preferences = useSWR(
-    session?.activeWorkspace.type === "CUSTOMER" && !preview.enabled
+    session?.activeWorkspace.type === "CUSTOMER"
       ? [session.activeWorkspace.id, "workspace-preferences"]
       : null,
     workspaceService.preferences,
   );
-  useEffect(() => {
-    if (preferences.data) setLimit((preferences.data.defaultLimitMinor / 100).toFixed(2));
-  }, [preferences.data]);
   if (session?.activeWorkspace.type !== "CUSTOMER")
     return (
       <p role="alert">Catalog checkout is available in Customer workspaces.</p>
@@ -93,7 +83,7 @@ export default function Catalog() {
             void action.run(async () => {
               const [productId, variantId] = selection.split(":");
               const q = Number(quantity),
-                l = moneyFromDollars(limit);
+                l = Math.round(Number(limit ?? ((preferences.data?.defaultLimitMinor ?? 7500) / 100).toFixed(2)) * 100);
               if (
                 !Number.isSafeInteger(q) ||
                 q < 1 ||
@@ -139,7 +129,7 @@ export default function Catalog() {
                 className="vp-input"
                 inputMode="decimal"
                 required
-                value={limit}
+                value={limit ?? ((preferences.data?.defaultLimitMinor ?? 7500) / 100).toFixed(2)}
                 onChange={(e) => {
                   setLimit(e.target.value);
                   setQuote(null);

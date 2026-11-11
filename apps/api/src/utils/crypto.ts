@@ -56,6 +56,20 @@ export function sourceManifestDigest(
   });
 }
 
+export function sourceShareParamsHash(input: {
+  caseId: string;
+  caseVersion: number;
+  accessRevision: number;
+  sourceId: string;
+  sourceVersion: number;
+  sha256: string | null;
+  ownerParty: string;
+  actorId: string;
+  audience: "CASE_SHARED" | "PROVIDER_SHARED";
+}): string {
+  return canonicalHash({ bindingVersion: 1, intent: "SHARE_SOURCE", ...input });
+}
+
 export function mediationConsentParamsHash(input: {
   caseId: string;
   caseVersion: number;

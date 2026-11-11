@@ -17,9 +17,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <span>© 2026 VelaPal</span>
           <span>
             Your money, in your hands. <i aria-hidden="true" />{" "}
-            {process.env.NEXT_PUBLIC_API_MODE === "api"
-              ? "VelaPal workspace"
-              : "Prototype · Local demo data"}
+            VelaPal workspace
           </span>
           <span>Always your decision.</span>
         </footer>

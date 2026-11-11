@@ -32,7 +32,6 @@ export default function TransactionsContent() {
   } = useTransactions(query);
 
   const busy = isLoading || isRefreshing;
-  const isMock = process.env.NEXT_PUBLIC_API_MODE === "mock";
 
   function applyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -81,11 +80,6 @@ export default function TransactionsContent() {
           </p>
         </div>
 
-        {isMock && (
-          <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600">
-            Demo data
-          </span>
-        )}
       </header>
 
       <form

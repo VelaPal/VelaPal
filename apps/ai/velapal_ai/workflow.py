@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 import time
+from decimal import Decimal
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command, interrupt
@@ -31,7 +32,12 @@ def records(ctx):
     if tx:
         docs.append({**tx["snapshotSourceRef"], "text": f"Backend transaction record: orderId={tx['orderId']}; sku={tx['sku']}; variantId={tx['variantId']}; amountMinor={tx['amountMinor']}; currency={tx['currency']}; paymentStatus={tx['paymentStatus']}; refundableRemainingMinor={tx['refundableRemainingMinor']}. This record is not an independent PayPal verification.", "kind": "SERVER_RECORD"})
     for p in ctx.get("personalContext", {}).get("catalogItems", []):
-        docs.append(text_doc(p["id"], f"{p['name']} ({p['sku']}). Listed price: {money(p['priceMinor'], p['currency'])}. Available options: " + "; ".join(f"{v['label']}: {money(v['priceMinor'], p['currency'])}" for v in p['variants']), p["catalogVersion"], kind="CATALOG"))
+        docs.append(text_doc(
+            p["id"],
+            f"{p['name']} ({p['sku']}). Listed price: {money(p['priceMinor'], p['currency'])}. Available options: " + "; ".join(f"{v['label']}: {money(v['priceMinor'], p['currency'])}" for v in p["variants"]),
+            p["catalogVersion"], kind="CATALOG", productName=p["name"], sku=p["sku"],
+            priceMinor=p["priceMinor"], currency=p["currency"], variants=p["variants"],
+        ))
     for tx in ctx.get("personalContext", {}).get("recentTransactions", []):
         docs.append(text_doc(tx["id"], f"Backend transaction: orderId={tx['orderId']}; paymentStatus={tx['paymentStatus']}; amountMinor={tx['amountMinor']}; currency={tx['currency']}. This is not a subscription renewal schedule.", kind="SERVER_RECORD"))
     return docs
@@ -51,6 +57,82 @@ def verify_findings(draft, docs):
         good.append({"findingId": f"finding_{len(good)+1}", "kind": finding["kind"], "text": finding["text"],
             "sourceRefs": [{k: c[k] for k in ("sourceId", "version", "locator")} for c in cites]})
     return good, rejected
+
+def verify_party_assessment(assessment, docs):
+    lookup = {(d["sourceId"], d["version"], d["locator"]): d["text"] for d in docs}
+    def valid(citation):
+        key = (citation.get("sourceId"), citation.get("version"), citation.get("locator"))
+        return key in lookup and normalize(citation.get("quote", "")) in normalize(lookup.get(key, ""))
+    supporting = [c for c in assessment.get("supportingEvidence", []) if valid(c)]
+    contrary = [c for c in assessment.get("contraryEvidence", []) if valid(c)]
+    indication = assessment.get("indication", "INCONCLUSIVE")
+    confidence = assessment.get("confidence", "LOW")
+    rationale = str(assessment.get("rationale", ""))[:700]
+    invalid_refs = (
+        len(supporting) != len(assessment.get("supportingEvidence", [])) or
+        len(contrary) != len(assessment.get("contraryEvidence", []))
+    )
+    if invalid_refs or (indication != "INCONCLUSIVE" and not supporting):
+        indication, confidence = "INCONCLUSIVE", "LOW"
+        rationale = "The generated party assessment was not fully supported by valid source quotations, so no party indication is reported."
+        supporting, contrary = [], []
+    elif indication == "INCONCLUSIVE":
+        confidence = "LOW"
+    elif confidence == "HIGH" and len({(c["sourceId"], c["version"], c["locator"]) for c in supporting}) < 2:
+        confidence = "MODERATE"
+    return {
+        "indication": indication,
+        "confidence": confidence,
+        "rationale": rationale or "The evidence does not support a reliable party indication.",
+        "supportingEvidence": supporting,
+        "contraryEvidence": contrary,
+    }
+
+def grounded_catalog_matches(ctx, docs):
+    """Build product suggestions only from catalog facts in the signed API context."""
+    prompt = normalize(ctx.get("prompt", "")).lower()
+    if not re.search(r"\b(find|looking for|recommend|suggest|shop|buy|purchase)\b", prompt):
+        return []
+    budget_match = re.search(
+        r"\b(?:under|below|less than|at most|up to|max(?:imum)?)\s*(?:us\$|\$|usd\s*)?([0-9]+(?:\.[0-9]{1,2})?)|\$\s*([0-9]+(?:\.[0-9]{1,2})?)",
+        prompt,
+        re.I,
+    )
+    if not budget_match:
+        return []
+    budget_minor = int(Decimal(next(value for value in budget_match.groups() if value)) * 100)
+    strict = bool(re.search(r"\b(?:under|below|less than)\b", prompt))
+    ignored = {"find", "looking", "recommend", "suggest", "shop", "buy", "purchase", "under", "below", "less", "than", "with", "for", "the", "and", "from"}
+    prompt_terms = set(re.findall(r"[a-z0-9]+", prompt))
+    suggestions = []
+    for doc in docs:
+        if doc.get("kind") != "CATALOG":
+            continue
+        product_terms = set(re.findall(r"[a-z0-9]+", str(doc.get("productName", "")).lower())) - ignored
+        if not product_terms.intersection(prompt_terms):
+            continue
+        variants = doc.get("variants") or []
+        options = [
+            option for option in variants
+            if isinstance(option, dict)
+            and isinstance(option.get("priceMinor"), int)
+            and (option["priceMinor"] < budget_minor if strict else option["priceMinor"] <= budget_minor)
+        ]
+        if not variants:
+            price = doc.get("priceMinor")
+            if isinstance(price, int) and (price < budget_minor if strict else price <= budget_minor):
+                options = [{"label": str(doc.get("sku", "Listed option")), "priceMinor": price}]
+        if not options:
+            continue
+        option_text = "; ".join(f"{option['label']}: {money(option['priceMinor'], doc['currency'])}" for option in options)
+        text = f"{doc['productName']} — {option_text}."
+        suggestions.append({
+            "findingId": f"catalog_{len(suggestions) + 1}",
+            "kind": "OBSERVATION",
+            "text": text,
+            "sourceRefs": [ref(doc)],
+        })
+    return suggestions
 
 class Workflow:
     def __init__(self, s, model, gateway, vector, saver, registry):
@@ -76,14 +158,22 @@ class Workflow:
         def ground(state):
             d = state["draft"]
             findings, rejected = verify_findings(d, state["docs"])
+            party_assessment = verify_party_assessment(d.get("partyAssessment", {}), state["docs"])
             missing = [x[:500] for x in d["missingEvidence"]]
+            catalog_matches = grounded_catalog_matches(ctx, state["docs"]) if purpose == "PERSONAL_ASSISTANT" else []
+            if catalog_matches:
+                findings = catalog_matches
+                missing = []
             seen = {(x["sourceId"], x["version"]) for x in state["docs"]}
             if any((x["sourceId"], x["version"]) not in seen for x in ctx["allowedSources"]):
                 missing.append("Some authorized files have no retrieved text. Wait for indexing, upload legible text, or narrow the evidence set.")
             if purpose == "PERSONAL_ASSISTANT" and re.search(r"subscription|renew", ctx.get("prompt", ""), re.I):
                 findings = []
                 missing.append("No subscription renewal records are available in this backend context. Check the provider dashboard; no renewals or cancellations were inferred.")
-            needs_review = purpose == "SHARED_ASSESSMENT" and (d["needsReview"] or any(f["kind"] == "CONFLICT" for f in findings))
+            needs_review = purpose == "SHARED_ASSESSMENT" and (
+                d["needsReview"] or any(f["kind"] == "CONFLICT" for f in findings) or
+                party_assessment["indication"] != "INCONCLUSIVE"
+            )
             status = "ABSTAINED" if rejected and not findings else "NEEDS_INFO" if missing or needs_review else "COMPLETED"
             tx = ctx.get("transactionFacts")
             facts = [{"text": f"Backend payment record: {tx['paymentStatus']}; amountMinor={tx['amountMinor']}; currency={tx['currency']}; refundableRemainingMinor={tx['refundableRemainingMinor']}. Independent provider verification is outside this AI run.",
@@ -95,6 +185,9 @@ class Workflow:
             result = {"runId": ctx["runId"], "inputVersion": ctx["inputVersion"], "caseVersion": ctx["caseVersion"], "status": status, "audience": ctx["audience"],
                 "modelMode": mode, "businessDataMode": ctx["businessDataMode"], "category": ctx.get("category"),
                 "verifiedFacts": facts, "claims": claims, "findings": findings, "missingEvidence": missing[:6],
+                "assessmentNature": "ADVISORY",
+                "partyAssessment": party_assessment if purpose == "SHARED_ASSESSMENT" else None,
+                "recommendation": str(d.get("recommendation") or "Request review of the cited evidence before taking action.")[:700],
                 "uncertainty": d["uncertainty"] or "No authenticity or legal determination was made.",
                 "policyReferences": ["VELAPAL_ASSISTANCE_V1 (internal workflow policy, not PayPal policy)"],
                 "nextStep": "ESCALATE_TO_ADMIN" if needs_review else "REQUEST_CLARIFICATION" if missing else

@@ -5,7 +5,6 @@ import { scripts } from "./package.json";
 const nextConfig: NextConfig = {
   async rewrites() {
     const upstream = resolveApiUpstream({
-      mode: process.env.NEXT_PUBLIC_API_MODE,
       upstream: process.env.API_UPSTREAM,
       frontendPort: /--port\s+(\d+)/.exec(scripts.dev)?.[1],
     });

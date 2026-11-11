@@ -30,23 +30,16 @@ export default function HomePage() {
             <span>You review. You approve. Vela helps with the rest.</span>
           </div>
         </section>
-        <section
-          className="vp-landing-preview"
-          aria-label="Demo workspace preview"
-        >
+        <section className="vp-landing-preview" aria-label="VelaPal workspace features">
           <div className="vp-landing-preview-kicker">
             <span>
               <i />
               YOUR VELA WORKSPACE
             </span>
-            <span className="vp-public-status">Demo</span>
+            <span className="vp-public-status">Workspace</span>
           </div>
           <h2>Every next step, in view.</h2>
-          <p className="vp-preview-caption">Tracked purchases</p>
-          <p className="vp-preview-amount">
-            $134<span>.00</span>
-          </p>
-          <p className="vp-preview-period">October · Vela Market sample</p>
+          <p className="vp-preview-caption">Connected to your VelaPal account</p>
           <ol>
             {[
               [
@@ -76,9 +69,6 @@ export default function HomePage() {
               </li>
             ))}
           </ol>
-          <p className="vp-preview-note">
-            No live payment, email, or AI connection in this prototype.
-          </p>
         </section>
       </main>
       <section

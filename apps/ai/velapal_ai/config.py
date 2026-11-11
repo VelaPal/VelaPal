@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 @dataclass
 class Settings:
-    mode: str = "fixture"
+    mode: str = "live"
     api_url: str = "http://localhost:4000"
     worker_token: str = "velapal-worker-to-ai-secret-v61"
     callback_token: str = "velapal-ai-to-express-secret-v61"
@@ -22,7 +22,7 @@ class Settings:
     @classmethod
     def load(cls):
         load_dotenv()
-        s = cls(mode=os.getenv("AI_MODEL_MODE", "fixture"), api_url=os.getenv("API_INTERNAL_BASE_URL", "http://localhost:4000").rstrip("/"),
+        s = cls(mode=os.getenv("AI_MODEL_MODE", "live"), api_url=os.getenv("API_INTERNAL_BASE_URL", "http://localhost:4000").rstrip("/"),
             worker_token=os.getenv("WORKER_TO_AI_SECRET", cls.worker_token), callback_token=os.getenv("AI_TO_EXPRESS_SECRET", cls.callback_token),
             hmac_secret=os.getenv("MANIFEST_HMAC_SECRET", cls.hmac_secret), qdrant_url=os.getenv("QDRANT_URL", cls.qdrant_url).rstrip("/"),
             qdrant_key=os.getenv("QDRANT_API_KEY", ""), data_dir=os.getenv("AI_DATA_DIR", "./data"), gemini_key=os.getenv("GEMINI_API_KEY", ""),

@@ -6,9 +6,44 @@ import { sha256 } from "../utils/crypto";
 const AI_BASE_URL = process.env.AI_SERVICE_URL || "http://localhost:8000";
 const API_INTERNAL_BASE_URL = process.env.API_INTERNAL_BASE_URL || "http://localhost:4000";
 const WORKER_TOKEN = process.env.WORKER_TO_AI_SECRET || "velapal-worker-to-ai-secret-v61";
+const MAX_JOB_ATTEMPTS = 5;
+
+async function retryJob(
+  jobId: string,
+  attempt: number,
+  jobType: string,
+  runId: string | undefined,
+  error: unknown,
+) {
+  const statusMatch = error instanceof Error ? error.message.match(/HTTP (\d{3})/) : null;
+  const httpStatus = statusMatch ? Number(statusMatch[1]) : null;
+  const permanentHttpFailure = httpStatus !== null && httpStatus >= 400 && httpStatus < 500 &&
+    ![408, 425, 429].includes(httpStatus);
+  const failed = attempt >= MAX_JOB_ATTEMPTS || permanentHttpFailure;
+  const delayMs = Math.min(60_000, 1_000 * 2 ** Math.max(0, attempt - 1));
+  await prisma.outboxJob.update({
+    where: { id: jobId },
+    data: {
+      state: failed ? "FAILED" : "PENDING",
+      leaseUntil: null,
+      nextAttemptAt: new Date(Date.now() + delayMs),
+    },
+  });
+  if (failed && runId && ["RUN_AI_ASSESSMENT", "RESUME_AI_ASSESSMENT"].includes(jobType)) {
+    await prisma.agentRun.updateMany({
+      where: { id: runId, status: { in: ["QUEUED", "RUNNING"] } },
+      data: { status: httpStatus === 409 ? "STALE" : "FAILED" },
+    });
+  }
+  console.error(`[OutboxWorker] Job ${jobId} ${failed ? "failed permanently" : "scheduled for retry"} (attempt ${attempt}/${MAX_JOB_ATTEMPTS}):`, error);
+}
 
 export function startDurableOutboxWorker(pollIntervalMs = 2500) {
   setInterval(async () => {
+    let activeJobId: string | null = null;
+    let activeAttempt = 0;
+    let activeJobType = "";
+    let activeRunId: string | undefined;
     try {
       const now = new Date();
       const job = await prisma.outboxJob.findFirst({
@@ -31,8 +66,12 @@ export function startDurableOutboxWorker(pollIntervalMs = 2500) {
         data: { state: "LEASED", leaseUntil, retryCount: { increment: 1 } },
       });
       if (claimed.count === 0) return;
+      activeJobId = job.id;
+      activeAttempt = job.retryCount + 1;
+      activeJobType = job.jobType;
 
       const payload = job.payload as any;
+      activeRunId = payload.runId;
 
       if (job.jobType === "SCAN_AND_INDEX_SOURCE") {
         const src = await prisma.caseSource.findUnique({ where: { id: payload.sourceId } });
@@ -79,6 +118,7 @@ export function startDurableOutboxWorker(pollIntervalMs = 2500) {
               expiresAt: readExpiresAt.toISOString(),
             },
           }),
+          signal: AbortSignal.timeout(120_000),
         });
         if (!response.ok) {
           const message = `AI evidence indexing returned HTTP ${response.status}`;
@@ -109,6 +149,7 @@ export function startDurableOutboxWorker(pollIntervalMs = 2500) {
             revokedUpToVersion: payload.revokedUpToVersion,
             accessRevision: payload.accessRevision,
           }),
+          signal: AbortSignal.timeout(30_000),
         });
         if (!response.ok) {
           if (response.status === 429 || response.status >= 500) {
@@ -127,76 +168,91 @@ export function startDurableOutboxWorker(pollIntervalMs = 2500) {
       } else if (job.jobType === "RUN_AI_ASSESSMENT") {
         // Frozen PRD §15 request body: { runId, purpose, expectedContextVersion, traceId }
         await prisma.agentRun.update({ where: { id: payload.runId }, data: { status: "RUNNING" } });
-        try {
-          const res = await fetch(`${AI_BASE_URL}/internal/v1/case-runs`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Worker-Service-Token": WORKER_TOKEN,
+        const res = await fetch(`${AI_BASE_URL}/internal/v1/case-runs`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Worker-Service-Token": WORKER_TOKEN,
+          },
+          body: JSON.stringify({
+            runId: payload.runId,
+            purpose: payload.purpose,
+            expectedContextVersion: payload.expectedContextVersion,
+            traceId: job.traceId,
+          }),
+          signal: AbortSignal.timeout(120_000),
+        });
+        if (!res.ok) {
+          throw new Error(`AI assessment returned HTTP ${res.status}`);
+        }
+        const aiDto = await res.json();
+        const c = payload.caseId
+          ? await prisma.disputeCase.findUnique({ where: { id: payload.caseId } })
+          : null;
+        const run = await prisma.agentRun.findUnique({ where: { id: payload.runId } });
+        const currentContextVersion = c && payload.purpose === "SHARED_ASSESSMENT"
+          ? c.caseVersion
+          : c?.privateContextVersion;
+        const contextIsCurrent = !payload.caseId || (
+          !!c &&
+          currentContextVersion === payload.expectedContextVersion &&
+          run?.accessRevision === c.accessRevision
+        );
+        if (contextIsCurrent) {
+          await prisma.agentRun.update({
+            where: { id: payload.runId },
+            data: {
+              status: aiDto.status || "COMPLETED",
+              resultPayload: aiDto,
             },
-            body: JSON.stringify({
-              runId: payload.runId,
-              purpose: payload.purpose,
-              expectedContextVersion: payload.expectedContextVersion,
-              traceId: job.traceId,
-            }),
           });
-          if (res.ok) {
-            const aiDto = await res.json();
-            const c = payload.caseId
-              ? await prisma.disputeCase.findUnique({ where: { id: payload.caseId } })
-              : null;
-            if (!c || c.caseVersion === payload.expectedContextVersion) {
-              await prisma.agentRun.update({
-                where: { id: payload.runId },
-                data: {
-                  status: aiDto.status || "COMPLETED",
-                  resultPayload: aiDto,
-                },
-              });
-              if (c && aiDto.requiresHumanApproval) {
-                await prisma.disputeCase.update({
-                  where: { id: c.id },
-                  data: {
-                    control: "WAITING_ADMIN",
-                    controlVersion: { increment: 1 },
-                    gateReason: "MATERIAL_CONFLICT_INVOICE_VS_LABEL",
-                  },
-                });
-              }
-            } else {
-              await prisma.agentRun.update({
-                where: { id: payload.runId },
-                data: { status: "STALE" },
-              });
-            }
+          if (c && payload.purpose === "SHARED_ASSESSMENT" && aiDto.requiresHumanApproval) {
+            await prisma.disputeCase.update({
+              where: { id: c.id },
+              data: {
+                control: "WAITING_ADMIN",
+                controlVersion: { increment: 1 },
+                gateReason: "MATERIAL_CONFLICT_INVOICE_VS_LABEL",
+              },
+            });
           }
-        } catch {
-          // Keep run in QUEUED/RUNNING if Python service is not yet started
+        } else {
+          await prisma.agentRun.update({
+            where: { id: payload.runId },
+            data: { status: "STALE" },
+          });
         }
         await prisma.outboxJob.update({ where: { id: job.id }, data: { state: "COMPLETED" } });
       } else if (job.jobType === "RESUME_AI_ASSESSMENT") {
-        try {
-          await fetch(`${AI_BASE_URL}/internal/v1/case-runs/${payload.runId}/resume`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Worker-Service-Token": WORKER_TOKEN,
-            },
-            body: JSON.stringify({
-              runId: payload.runId,
-              decisionId: payload.decisionId,
-              expectedContextVersion: payload.expectedContextVersion,
-              traceId: job.traceId,
-            }),
-          });
-        } catch {
-          // Ignore if Python service is offline
+        const response = await fetch(`${AI_BASE_URL}/internal/v1/case-runs/${payload.runId}/resume`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Worker-Service-Token": WORKER_TOKEN,
+          },
+          body: JSON.stringify({
+            runId: payload.runId,
+            decisionId: payload.decisionId,
+            expectedContextVersion: payload.expectedContextVersion,
+            traceId: job.traceId,
+          }),
+          signal: AbortSignal.timeout(120_000),
+        });
+        if (!response.ok) {
+          throw new Error(`AI assessment resume returned HTTP ${response.status}`);
         }
         await prisma.outboxJob.update({ where: { id: job.id }, data: { state: "COMPLETED" } });
       }
     } catch (err) {
-      console.error("[OutboxWorker] Error:", err);
+      if (activeJobId) {
+        try {
+          await retryJob(activeJobId, activeAttempt, activeJobType, activeRunId, err);
+        } catch (retryError) {
+          console.error(`[OutboxWorker] Could not update failed job ${activeJobId}:`, retryError);
+        }
+      } else {
+        console.error("[OutboxWorker] Error:", err);
+      }
     }
   }, pollIntervalMs);
 }
