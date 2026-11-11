@@ -229,6 +229,18 @@ export const PayPalAdapter = {
     return res.json();
   },
 
+  async getOrder(paypalOrderId: string) {
+    const token = await this.getAccessToken();
+    const res = await fetch(`${BASE_URL}/v2/checkout/orders/${paypalOrderId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`PayPal getOrder failed: ${res.status} ${errText}`);
+    }
+    return res.json();
+  },
+
   async captureOrder(paypalOrderId: string, requestId: string) {
     const token = await this.getAccessToken();
     const res = await fetch(`${BASE_URL}/v2/checkout/orders/${paypalOrderId}/capture`, {

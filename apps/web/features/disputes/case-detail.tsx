@@ -201,11 +201,39 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
                   <Badge>{m.audience}</Badge>
                 </div>
                 <p className="whitespace-pre-wrap break-words">{m.text}</p>
-                {m.sourceRefs?.map((r) => (
-                  <p key={r.sourceId} className="mt-2 break-all text-xs">
-                    {r.sourceId} · v{r.version} · {r.locator}
-                  </p>
-                ))}
+                {m.sourceRefs && m.sourceRefs.length > 0 && (
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-200/60">
+                    <span className="text-[11px] text-slate-400 font-medium">Cited sources:</span>
+                    {m.sourceRefs.map((r) => (
+                      <button
+                        key={r.sourceId}
+                        type="button"
+                        onClick={() => {
+                          setSourceFocus(r.sourceId);
+                          setTab("Evidence");
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-white hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 hover:border-blue-300 transition-colors cursor-pointer shadow-2xs"
+                        title={`Source: ${r.sourceId}\nv${r.version} · ${r.locator}`}
+                      >
+                        <span className="font-mono">
+                          {r.sourceId.length > 14
+                            ? `${r.sourceId.slice(0, 4)}…${r.sourceId.slice(-4)}`
+                            : r.sourceId}
+                        </span>
+                        <span className="text-slate-300">·</span>
+                        <span>v{r.version}</span>
+                        {r.locator && (
+                          <>
+                            <span className="text-slate-300">·</span>
+                            <span className="font-mono text-slate-500 bg-slate-50 px-1 py-0.2 rounded border border-slate-200/50">
+                              {r.locator}
+                            </span>
+                          </>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </li>
             ))}
           </ul>

@@ -258,9 +258,21 @@ commerceRouter.post("/checkout/orders/:id/capture", requireSession, async (req, 
     let opStatus: "SUCCEEDED" | "UNKNOWN" = "SUCCEEDED";
     let captureId: string | null = null;
     try {
-      const capRes = await PayPalAdapter.captureOrder(paypalOrderId || tx.paypalOrderId!, `pp-cap-${idem.key}`);
-      const capture = capRes.purchase_units?.[0]?.payments?.captures?.[0];
-      if (!capture?.id || capture.status !== "COMPLETED") {
+      let capture: any = null;
+      const orderIdToQuery = paypalOrderId || tx.paypalOrderId!;
+      try {
+        const capRes = await PayPalAdapter.captureOrder(orderIdToQuery, `pp-cap-${idem.key}`);
+        capture = capRes.purchase_units?.[0]?.payments?.captures?.[0];
+      } catch (err: any) {
+        if (err?.message?.includes("ORDER_ALREADY_CAPTURED")) {
+          const existingOrder = await PayPalAdapter.getOrder(orderIdToQuery);
+          capture = existingOrder.purchase_units?.[0]?.payments?.captures?.[0];
+        } else {
+          throw err;
+        }
+      }
+
+      if (!capture?.id || !["COMPLETED", "PENDING"].includes(capture.status)) {
         throw new Error(`PayPal capture was not confirmed (status: ${capture?.status || "missing"})`);
       }
       captureId = capture.id;
