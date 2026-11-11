@@ -16,7 +16,7 @@ import useSWR from "swr";
 import { useSession } from "@/features/auth/session";
 import { transactionsService } from "@/services/contracts/transactions.service";
 import { disputesService } from "@/services/contracts/disputes.service";
-import { AdminQueue } from "@/features/admin/admin-workspace";
+import { AdminOverview } from "@/features/admin/admin-overview";
 import StatCard from "@/components/ui/stat-card";
 import RecentTransactions from "@/features/transactions/components/recent-transactions";
 import { ErrorNotice } from "@/components/ui/workflow";
@@ -287,7 +287,7 @@ export default function WorkspaceDashboard() {
       return { transactions: transactions.items, cases: cases.items };
     },
   );
-  if (role === "ADMIN") return <AdminQueue overview />;
+  if (role === "ADMIN") return <AdminOverview />;
   const d = data.data;
   const dashboardTransactions = d?.transactions ?? [];
   const dashboardCases = d?.cases ?? [];

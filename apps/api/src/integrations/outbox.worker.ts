@@ -79,8 +79,12 @@ export function startDurableOutboxWorker(pollIntervalMs = 2500) {
           await prisma.outboxJob.update({ where: { id: job.id }, data: { state: "COMPLETED" } });
           return;
         }
-        const bytes = await StorageAdapter.readObjectBytes(src.objectKey);
-        const fileHash = sha256(bytes);
+        const { buffer } = await StorageAdapter.readObjectBytes(
+          src.objectKey,
+          src.originalName,
+          src.mime
+        );
+        const fileHash = sha256(buffer);
         const readToken = `hdl_${crypto.randomBytes(8).toString("hex")}`;
         const readExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
 

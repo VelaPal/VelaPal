@@ -166,6 +166,7 @@ export interface EvidenceSource {
   caseVersion?: number;
   accessRevision?: number;
   shareParamsHash?: string | null;
+  previewUrl?: string;
 }
 export interface CaseMessage {
   messageId: string;

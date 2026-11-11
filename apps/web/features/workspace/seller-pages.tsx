@@ -13,48 +13,12 @@ import {
   ApiSellerSettings,
 } from "./seller-api-pages";
 import { WorkspaceHeading } from "./shared";
+import { SellerOrders } from "./orders";
+
+export { SellerOrders };
 
 export function SellerProducts() {
   return <ApiSellerProducts />;
-}
-
-export function SellerOrders() {
-  const result = useSWR("seller-orders", transactionsService.list);
-  const rows = result.data?.items ?? [];
-
-  return (
-    <div className="vp-feature-page">
-      <WorkspaceHeading
-        eyebrow="SELLER PAYMENTS"
-        title="Orders"
-        copy="Review transaction records returned by the API."
-      />
-      {result.error && <ErrorNotice error={result.error} />}
-      {!result.data ? (
-        <Panel title="Loading orders"><p>Fetching API transactions…</p></Panel>
-      ) : rows.length === 0 ? (
-        <Panel title="No orders"><p>No transactions are available in this workspace.</p></Panel>
-      ) : (
-        <Panel title="Transactions">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead><tr><th>Order</th><th>Payment status</th><th>Amount</th><th>Verified</th></tr></thead>
-              <tbody>
-                {rows.map((row: Transaction) => (
-                  <tr key={row.id}>
-                    <td><Link className="vp-link" href={`/workspace/transactions/${encodeURIComponent(row.id)}`}>{row.orderId}<ArrowRight size={13} /></Link></td>
-                    <td>{row.paymentStatus}</td>
-                    <td>{formatMoney(row.amountMinor, row.currency)}</td>
-                    <td>{formatDate(row.verifiedAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
-      )}
-    </div>
-  );
 }
 
 export function SellerPayments({ insights = false }: { insights?: boolean }) {

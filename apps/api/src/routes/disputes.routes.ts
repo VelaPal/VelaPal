@@ -376,6 +376,7 @@ disputesRouter.get("/disputes/:id", requireSession, async (req, res) => {
           audience: s.audience,
           sha256: s.sha256,
           locator: s.locator,
+          previewUrl: `/api/v1/disputes/${c.id}/sources/${s.id}/stream?v=${s.sourceVersion}`,
         })),
         messages: messages.map((m) => ({
           messageId: m.id,
@@ -595,6 +596,49 @@ disputesRouter.get("/disputes/:id/sources/:sid", requireSession, async (req, res
       },
       src.sourceVersion
     );
+  } catch (err) {
+    return sendError(res, err);
+  }
+});
+
+// GET /api/v1/disputes/:id/sources/:sid/stream
+disputesRouter.get("/disputes/:id/sources/:sid/stream", requireSession, async (req, res) => {
+  try {
+    const c = await prisma.disputeCase.findUnique({ where: { id: req.params.id } });
+    if (!c) throw new AppError(404, "NOT_FOUND", "Dispute case not found");
+
+    const src = await prisma.caseSource.findUnique({ where: { id: req.params.sid } });
+    if (!src || src.caseId !== c.id || src.audience === "REVOKED") {
+      throw new AppError(404, "SOURCE_UNAVAILABLE", "Source not found or has been revoked");
+    }
+
+    if (req.auth!.workspaceType === "ADMIN") {
+      if (
+        !req.auth!.permissions.includes("disputes.read") &&
+        !req.auth!.permissions.includes("disputes.investigate")
+      ) {
+        throw new AppError(403, "FORBIDDEN", "Insufficient permissions to inspect evidence");
+      }
+    } else {
+      const actorParty = getActorParty(req.auth!, c);
+      if (src.audience === "PRIVATE" && src.ownerParty !== actorParty) {
+        throw new AppError(404, "SOURCE_UNAVAILABLE", "Source not visible to opposing party");
+      }
+    }
+
+    const { buffer, mime } = await StorageAdapter.readObjectBytes(
+      src.objectKey,
+      src.originalName,
+      src.mime
+    );
+
+    res.setHeader("Content-Type", mime);
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${encodeURIComponent(src.originalName)}"`
+    );
+    res.setHeader("Cache-Control", "private, no-cache, no-store, must-revalidate");
+    return res.status(200).send(buffer);
   } catch (err) {
     return sendError(res, err);
   }

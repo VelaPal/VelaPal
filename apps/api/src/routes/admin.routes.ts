@@ -281,6 +281,10 @@ adminRouter.get("/admin/disputes/:id", requireSession, async (req, res) => {
           ownerParty: s.ownerParty,
           originalName: s.originalName,
           locator: s.locator,
+          mime: s.mime,
+          scanState: s.scanState,
+          audience: s.audience,
+          previewUrl: `/api/v1/disputes/${c.id}/sources/${s.id}/stream?v=${s.sourceVersion}`,
         })),
         latestAssessment: latestRun?.resultPayload || null,
         pendingApprovalRequests: pendingApprovalRequests.map((ap) => ({

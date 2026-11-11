@@ -3,7 +3,11 @@ import { useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
+  Download,
+  ExternalLink,
+  Eye,
   FileText,
+  Image as ImageIcon,
   ShieldCheck,
   RefreshCw,
 } from "lucide-react";
@@ -320,26 +324,75 @@ export function AdminInvestigation({ caseId }: { caseId: string }) {
                         Only shared, authorized sources returned for this
                         investigation are shown.
                       </p>
-                      <ul className="vp-admin-source-list">
-                        {d.sharedSources?.map((source) => (
-                          <li
-                            id={`source-${source.sourceId}`}
-                            key={source.sourceId}
-                          >
-                            <FileText size={21} />
-                            <div>
-                              <strong>{source.originalName}</strong>
-                              <p>
-                                {source.sourceId} &middot; v
-                                {source.sourceVersion} &middot; {source.locator}
-                              </p>
-                              <small>
-                                {source.ownerParty} &middot; {source.scanState}
-                              </small>
-                            </div>
-                            <Badge>{source.audience}</Badge>
-                          </li>
-                        ))}
+                      <ul className="space-y-3">
+                        {d.sharedSources?.map((source) => {
+                          const previewUrl =
+                            source.previewUrl ||
+                            `/api/v1/disputes/${d.case.id}/sources/${source.sourceId}/stream?v=${source.sourceVersion}`;
+                          const isImg =
+                            (source.mime && source.mime.startsWith("image/")) ||
+                            /\.(jpe?g|png|webp|gif|svg)$/i.test(source.originalName);
+                          return (
+                            <li
+                              id={`source-${source.sourceId}`}
+                              key={source.sourceId}
+                              className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex items-center gap-3">
+                                  {isImg ? (
+                                    <div className="flex size-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                                      <ImageIcon className="size-4.5" />
+                                    </div>
+                                  ) : (
+                                    <div className="flex size-9 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+                                      <FileText className="size-4.5" />
+                                    </div>
+                                  )}
+                                  <div>
+                                    <strong className="block text-sm font-semibold text-slate-900">
+                                      {source.originalName}
+                                    </strong>
+                                    <p className="text-xs text-slate-500">
+                                      {source.sourceId} · v{source.sourceVersion} · {source.locator}
+                                    </p>
+                                    <small className="text-[11px] text-slate-400">
+                                      Party: {source.ownerParty} · Status: {source.scanState}
+                                    </small>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Badge>{source.audience}</Badge>
+                                  <a
+                                    href={previewUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 shadow-2xs"
+                                  >
+                                    <ExternalLink className="size-3" /> Open
+                                  </a>
+                                  <a
+                                    href={previewUrl}
+                                    download={source.originalName}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 shadow-2xs"
+                                  >
+                                    <Download className="size-3" /> Download
+                                  </a>
+                                </div>
+                              </div>
+                              {isImg && (
+                                <div className="mt-3 max-h-56 overflow-hidden rounded-lg border border-slate-100 bg-slate-900/5 flex items-center justify-center p-2">
+                                  <img
+                                    src={previewUrl}
+                                    alt={source.originalName}
+                                    className="max-h-52 object-contain rounded"
+                                    loading="lazy"
+                                  />
+                                </div>
+                              )}
+                            </li>
+                          );
+                        })}
                       </ul>
                       {!d.sharedSources?.length && (
                         <p className="vp-empty-note">

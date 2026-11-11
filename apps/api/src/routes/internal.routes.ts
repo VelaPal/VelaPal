@@ -26,9 +26,13 @@ internalRouter.get("/sources/:sid/bytes", async (req, res) => {
       throw new AppError(403, "FORBIDDEN", "Read handle token is invalid, expired, or source was revoked");
     }
 
-    const bytes = await StorageAdapter.readObjectBytes(src.objectKey);
-    res.setHeader("Content-Type", src.mime);
-    return res.status(200).send(bytes);
+    const { buffer, mime } = await StorageAdapter.readObjectBytes(
+      src.objectKey,
+      src.originalName,
+      src.mime
+    );
+    res.setHeader("Content-Type", mime);
+    return res.status(200).send(buffer);
   } catch (err) {
     return sendError(res, err);
   }

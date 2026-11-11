@@ -20,6 +20,13 @@ import Evidence from "./evidence";
 import OperationTracker from "./operation";
 import OfficialHandoff from "./official-handoff";
 import { formatMoney, formatDate } from "@/lib/format";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  ShieldCheck,
+  ArrowRight,
+} from "lucide-react";
 
 export default function CaseDetail({ caseId }: { caseId: string }) {
   const { session } = useSession();
@@ -600,22 +607,78 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
                 <p className="break-all text-xs text-slate-500">
                   Terms binding: {p.paramsHash} · Case v{p.caseVersion}
                 </p>
-                <ul className="space-y-2">
-                  {d.pendingConsents?.map((x) => (
-                    <li key={x.party + x.intent}>
-                      {x.party} · {x.intent} · <strong>{x.status}</strong>
-                    </li>
-                  ))}
-                </ul>
-                <label className="flex items-start gap-2">
+                <div className="space-y-2.5 rounded-xl border border-slate-200/80 bg-slate-50/60 p-4">
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                    Bilateral Consent &amp; Authorization Status
+                  </h4>
+                  <div className="grid gap-2">
+                    {d.pendingConsents?.map((x) => {
+                      const isCustTerms =
+                        x.party === "CUSTOMER" &&
+                        x.intent === "ACCEPT_PROPOSAL_TERMS";
+                      const isSellerTerms =
+                        x.party === "SELLER" &&
+                        x.intent === "ACCEPT_PROPOSAL_TERMS";
+                      const isSellerExec =
+                        x.party === "SELLER" &&
+                        x.intent === "AUTHORIZE_FINANCIAL_EXECUTION";
+
+                      const title = isCustTerms
+                        ? "Customer Terms Consent"
+                        : isSellerTerms
+                        ? "Seller Terms Consent"
+                        : isSellerExec
+                        ? "Seller Financial Execution (MFA Authorization)"
+                        : `${x.party} · ${x.intent}`;
+
+                      return (
+                        <div
+                          key={x.party + x.intent}
+                          className="flex items-center justify-between gap-3 rounded-lg border border-slate-200/80 bg-white px-3.5 py-2.5 shadow-xs"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            {x.status === "APPROVED" ? (
+                              <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
+                            ) : x.status === "REJECTED" ? (
+                              <AlertCircle className="size-4 shrink-0 text-rose-600" />
+                            ) : (
+                              <Clock className="size-4 shrink-0 text-amber-500" />
+                            )}
+                            <span className="truncate text-xs font-medium text-slate-700">
+                              {title}
+                            </span>
+                          </div>
+                          <div>
+                            {x.status === "APPROVED" ? (
+                              <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200">
+                                Approved
+                              </span>
+                            ) : x.status === "REJECTED" ? (
+                              <span className="inline-flex items-center rounded-full bg-rose-50 px-2.5 py-0.5 text-[11px] font-semibold text-rose-700 border border-rose-200">
+                                Rejected
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 border border-amber-200">
+                                Pending
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <label className="flex items-start gap-2 pt-1 text-xs text-slate-700">
                   <input
                     type="checkbox"
-                    className="mt-1"
+                    className="mt-0.5 size-4 rounded border-slate-300 text-blue-600"
                     checked={checked}
                     onChange={(e) => setChecked(e.target.checked)}
                   />
-                  I reviewed these exact terms, amount, route, expiry and
-                  current case version.
+                  <span>
+                    I reviewed these exact terms, refund amount, settlement route, expiry and current case version.
+                  </span>
                 </label>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -649,21 +712,25 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
                   </button>
                 </div>
                 {party === "SELLER" && checked && (
-                  <MfaStepUp
-                    purpose="MERCHANT_EXECUTION"
-                    targetId={p.actionRequestId}
-                    onVerified={(id) =>
-                      consent("AUTHORIZE_FINANCIAL_EXECUTION", "APPROVED", id)
-                    }
-                  />
+                  <div className="space-y-2 rounded-xl border border-blue-200/80 bg-blue-50/50 p-4">
+                    <p className="text-xs font-semibold text-blue-900">
+                      Merchant Financial Authorization (MFA Step-Up)
+                    </p>
+                    <p className="text-xs text-blue-700">
+                      Financial execution requires scoped step-up authorization. Use demo code <strong>123456</strong>.
+                    </p>
+                    <MfaStepUp
+                      purpose="MERCHANT_EXECUTION"
+                      targetId={p.actionRequestId}
+                      onVerified={(id) =>
+                        consent("AUTHORIZE_FINANCIAL_EXECUTION", "APPROVED", id)
+                      }
+                    />
+                  </div>
                 )}
-                <p className="text-xs text-slate-600">
-                  AUTHORIZE_FINANCIAL_EXECUTION is a separate Seller decision
-                  requiring scoped MFA. Accepting terms does not move funds.
-                </p>
                 {party === "SELLER" && (
                   <button
-                    className="vp-button"
+                    className="vp-button w-full sm:w-auto"
                     disabled={
                       action.busy ||
                       !c.capabilities?.canExecuteSettlement ||
@@ -688,11 +755,48 @@ export default function CaseDetail({ caseId }: { caseId: string }) {
                     Submit authorized settlement
                   </button>
                 )}
-                {!c.capabilities?.canExecuteSettlement && (
-                  <p className="text-amber-800">
-                    Financial execution unavailable for this case. No refund has
-                    been executed.
-                  </p>
+
+                {/* Clear status explanation box with soft, non-contrasting colors */}
+                {!c.capabilities?.canExecuteSettlement ? (
+                  <div className="rounded-xl border border-amber-200/80 bg-amber-50/60 p-4 text-xs text-amber-900">
+                    <div className="flex items-start gap-2.5">
+                      <Clock className="size-4 shrink-0 text-amber-600 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="font-semibold text-amber-900">
+                          Financial execution unavailable for this case
+                        </p>
+                        {party === "CUSTOMER" ? (
+                          <p className="text-amber-800">
+                            As the Customer, your step is to accept the proposal terms above. The Seller will execute the refund once all bilateral consents and MFA authorizations are verified. No funds have moved yet.
+                          </p>
+                        ) : party === "SELLER" ? (
+                          <p className="text-amber-800">
+                            Financial execution will unlock once both parties accept the proposal terms and your merchant MFA authorization is verified. No funds have been deducted yet.
+                          </p>
+                        ) : (
+                          <p className="text-amber-800">
+                            Awaiting required bilateral consents before settlement execution. No funds have moved yet.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/70 p-4 text-xs text-emerald-900">
+                    <div className="flex items-start gap-2.5">
+                      <CheckCircle2 className="size-4 shrink-0 text-emerald-600 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="font-semibold text-emerald-900">
+                          All Bilateral Consents Met
+                        </p>
+                        <p className="text-emerald-800">
+                          {party === "SELLER"
+                            ? "All parties have accepted terms and merchant financial authorization is verified. Click 'Submit authorized settlement' above to execute the refund via PayPal."
+                            : "All parties have accepted terms. Awaiting Seller to submit the authorized settlement."}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                 )}
               </div>
             ) : (

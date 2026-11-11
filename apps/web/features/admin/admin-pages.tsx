@@ -147,8 +147,6 @@ export function AdminSettings() {
   </AdminOnly>;
 }
 
-export function AdminOverview({ caseCount, reviewCaseId }: { caseCount: number; reviewCaseId?: string }) {
-  return <div className="vp-admin-page"><AdminHeading title="Operations overview" description="Live API case queue." /><p>{caseCount} open cases</p>{reviewCaseId && <p>Next case for review: {reviewCaseId}</p>}</div>;
-}
+export { AdminOverview } from "./admin-overview";
 
 export function AdminAuditPage() { return <AuditEvents />; }

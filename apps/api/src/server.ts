@@ -9,6 +9,7 @@ import { adminRouter } from "./routes/admin.routes";
 import { internalRouter } from "./routes/internal.routes";
 import { workspaceRouter } from "./routes/workspace.routes";
 import { startDurableOutboxWorker } from "./integrations/outbox.worker";
+import { StorageAdapter } from "./integrations/storage.adapter";
 
 const app = express();
 
@@ -37,6 +38,37 @@ app.get("/health", (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+// Storage upload endpoint for local development / MinIO fallback
+app.put(
+  "/api/v1/storage/upload",
+  express.raw({ type: "*/*", limit: "5mb" }),
+  async (req, res) => {
+    try {
+      const key = req.query.key as string;
+      const mime = req.query.mime as string;
+      const expires = req.query.expires as string;
+      const signature = req.query.signature as string;
+      if (!key || !mime || !expires || !signature || !StorageAdapter.verifyLocalUpload(key, mime, expires, signature)) {
+        return res.status(403).json({ error: "Upload handle is invalid or expired" });
+      }
+      if (!["image/jpeg", "image/png", "application/pdf"].includes(mime)) {
+        return res.status(415).json({ error: "Unsupported evidence media type" });
+      }
+      const buffer = Buffer.isBuffer(req.body)
+        ? req.body
+        : Buffer.from(req.body || "");
+      if (!buffer.length || buffer.length > 5 * 1024 * 1024) {
+        return res.status(413).json({ error: "Evidence upload must be between 1 byte and 5 MB" });
+      }
+      await StorageAdapter.saveObjectBytes(key, buffer, mime);
+      return res.status(200).send({ ok: true });
+    } catch (err: any) {
+      console.error("[Storage upload] Failed to persist evidence", err);
+      return res.status(500).json({ error: "Evidence upload failed" });
+    }
+  }
+);
 
 // Public Browser API (/api/v1)
 app.use("/api/v1", authRouter);
