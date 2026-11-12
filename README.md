@@ -93,6 +93,24 @@ docker compose -f docker-compose.yml -f docker-compose.ai.yml --profile ai up -d
 
 When using the AI container, set `API_INTERNAL_BASE_URL=http://host.docker.internal:4000` in `apps/api/.env` as described in `docker-compose.ai.yml`. The example AI configuration uses live Gemini mode and requires a valid API key. The AI README documents model setup, fixture mode, service boundaries, and test coverage.
 
+## How PayPal and AI are used
+
+### PayPal
+
+The Express API integrates with PayPal REST APIs using server-side OAuth credentials. In checkout, VelaPal creates a PayPal order and captures it after the buyer approves it. The dispute workflow can issue a PayPal capture refund after the required party consents and Seller financial authorization are recorded. The API also includes PayPal webhook signature verification and reconciliation paths. Optional PayPal multiparty APIs support seller onboarding and recurring subscriptions when the merchant app has those capabilities enabled. Local development uses PayPal Sandbox; set credentials in `apps/api/.env`. The interactive `npm run smoke:paypal` script creates, captures, and refunds a sandbox order.
+
+### AI
+
+The Python FastAPI service uses LangGraph to coordinate evidence retrieval, party preparation, mediation assistance, and grounding checks. In live mode, Gemini generates structured drafts and creates 768-dimensional embeddings; Qdrant stores and retrieves authorized evidence vectors. The service returns findings with source citations and preserves uncertainty. Express remains authoritative for identity, evidence access, review decisions, consent, and financial execution: AI does not execute PayPal operations or make a binding dispute decision. Fixture mode provides deterministic local behavior without Gemini calls.
+
+### Tools and technologies
+
+The project also uses Next.js, React, TypeScript, Tailwind CSS, Express, Prisma, PostgreSQL, Docker Compose, MinIO (S3-compatible object storage), and Qdrant. Python dependencies include FastAPI, LangGraph, and Gemini API calls made over HTTPX.
+
+No APIMatic, Postman/Astro, or Render integration is configured in this repository. The documented development setup runs locally with Docker Compose. If one of these sponsor tools is used for a submission or deployment, document its actual workspace, collection, service, or deployed URL here.
+
+VelaPal-authored code and documentation are released under the [MIT License](https://opensource.org/license/mit/), an OSI-approved license. Third-party dependencies and assets, including the bundled Geist font, retain their own licenses.
+
 ## Useful commands
 
 Run commands from the corresponding app directory:
@@ -121,3 +139,4 @@ Run commands from the corresponding app directory:
 - [Frontend setup](apps/web/README.md)
 - [AI service setup, design, and test scope](apps/ai/README.md)
 - [VelaPal API contract](packages/contracts/velapal-v6.1-api-contract.md)
+- [MIT License](LICENSE)

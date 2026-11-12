@@ -1,42 +1,45 @@
-# VelaPal AI — Ibnu's repo integration
+# VelaPal AI service
 
-FastAPI service for the VelaPal Express/Next.js repository at commit `95cfe69`. Implements personal assistance, private customer/seller preparation, evidence analysis and voluntary mediation in one bounded LangGraph. It has no PayPal execution client.
+FastAPI service for evidence indexing, retrieval, case preparation, and voluntary mediation assistance. LangGraph coordinates the bounded workflow. Gemini provides structured generation, image extraction in live mode, and 768-dimensional text embeddings. Qdrant stores and retrieves authorized evidence vectors. The service does not call PayPal or execute payments, refunds, or binding dispute decisions.
 
-See [Windows setup and team handoff](../../docs/ibnu/START_HERE.md), [wire contract](../../docs/ibnu/KONTRAK_INTEGRASI.md), and [test evidence](../../docs/ibnu/TESTING.md).
+Express remains authoritative for user identity, access to evidence, review decisions, party consent, and financial execution. The AI service retrieves data through authenticated internal API routes and returns cited findings with uncertainty preserved. Source revocation removes corresponding indexed vectors and graph state.
 
-## Quick start
+## Local setup
 
-Python 3.11+; PostgreSQL, Qdrant and private S3-compatible storage from the repository's infrastructure. Use one AI worker.
+Requirements: Python 3.11+, the repository's PostgreSQL/Qdrant/MinIO infrastructure, and the Express API. The local Compose setup is documented in the [root README](../../README.md). Use a single AI worker because graph checkpoints are stored in local SQLite.
+
+From this directory:
 
 ```bash
+cp .env.example .env
 python -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m pip install -r requirements-dev.in
-.venv/bin/python scripts/setup_env.py
-.venv/bin/python -m pytest -q
-.venv/bin/python -m uvicorn velapal_ai.main:app --host 127.0.0.1 --port 8000 --workers 1
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+# macOS/Linux: source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
-On Windows substitute `.venv\Scripts\python.exe`. Start Express on port 4000 and Next.js on port 3000 using the integration guide. `GET /health` checks liveness; `GET /ready` checks Qdrant configuration. Readiness does not perform a paid Gemini probe.
+Set `GEMINI_API_KEY` in `.env` for live mode. Keep `API_INTERNAL_BASE_URL`, the directional service tokens, and `MANIFEST_HMAC_SECRET` aligned with `apps/api/.env`. Then start the service:
 
-## Real model activation
+```bash
+python -m uvicorn velapal_ai.main:app --host 127.0.0.1 --port 8000 --workers 1
+```
 
-Fixture mode is deterministic and labeled. It reads real text PDFs, uses feature-hash test vectors in a separate collection, and does not pretend to OCR images. It makes no Gemini requests.
+`GET /health` checks liveness. `GET /ready` checks Qdrant availability; it does not make a Gemini request.
 
-Set `GEMINI_API_KEY` locally, discover available models with `scripts/provider_smoke.py --list-models`, set `GEMINI_MODEL`, and explicitly run `--allow-live` to test structured JSON, grounded quotation, image input, and 768-dimensional embeddings. Then set `AI_MODEL_MODE=live` and restart. Errors do not silently fall back to fixture.
+### Model modes
 
-Model mode and business-data provenance are independent. `live` means a real Gemini call; it does not mean a real PayPal transaction. Personal/catalog demonstration data remains conservatively labeled synthetic. Case transaction provenance comes from backend configuration and provider-operation records, not an AI assertion.
+- **Live mode** sends generation, embedding, and supported image extraction requests to Gemini. Set `GEMINI_API_KEY` and `GEMINI_MODEL` in `.env`. The model name can be checked with `python scripts/provider_smoke.py --list-models`. The smoke script's `--allow-live` option sends real requests to Gemini.
+- **Fixture mode** is deterministic and makes no Gemini requests. It supports text PDF extraction and test embeddings in a separate vector collection; it does not OCR images. Configure `AI_MODEL_MODE=fixture` in `.env` for this mode.
 
-## Design
+Live model mode describes the AI provider only; it does not imply PayPal-backed business data or payment execution. Transaction provenance comes from Express records.
 
-Express owns identity, case access, versions, review decisions, financial consent and provider outcomes. Python verifies the signed context, retrieves only currently authorized source/version/hash/audience/owner scopes, creates cited findings, and commits through Express's compare-and-swap checkpoint endpoint.
+## Tests
 
-The graph persists to private local SQLite, pauses on material conflicts, and resumes only with a current backend decision. Review approval preserves uncertainty. Source revocation purges indexed versions and graph checkpoints; current context checks prevent stale publication.
+Install test dependencies and run the suite:
 
-A case run uses at most two generative calls (shared) or one (private/personal), one retrieval embedding query, twelve retrieved chunks and a 110-second request budget. File indexing is separately bounded. Use the documented single-process setup; multiple replicas require additional coordination and a suitable checkpoint store.
+```bash
+python -m pip install -r requirements-dev.in
+python -m pytest -q
+```
 
-## Tested scope
-
-The previous integration release passed 24 AI tests on Python 3.11.17 and 3.12.14 and 30 disposable-stack integration checks on base `80e8ab2`. Application runtime code is byte-identical in this rebase; new verification is recorded in [the revision report](../../docs/ibnu/REVISION_95cfe69.md). The original disposable stack ran against actual compiled Express/Prisma, FastAPI, Qdrant 1.11.0, PGlite PostgreSQL-wire storage and Moto S3. No live Gemini or PayPal API call was made. Native PostgreSQL/MinIO, Docker execution, Windows runtime and the final browser workflow still require team validation.
-
-This is hackathon/development software. Repository demo authentication and format validation are not production authentication or antivirus scanning. Secrets and runtime evidence/checkpoints are excluded from the package.
+The test suite covers workflow behavior, grounding, vector access, and the internal API gateway. No live Gemini request is needed for the tests.
